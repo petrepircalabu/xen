@@ -429,6 +429,12 @@ int main(int argc, char *argv[])
         after_first_access = XENMEM_access_rwx;
         memaccess = 1;
     }
+    else if ( !strcmp(argv[0], "read") )
+    {
+        default_access = XENMEM_access_x;
+        after_first_access = XENMEM_access_rwx;
+        memaccess = 1;
+    }
     else if ( !strcmp(argv[0], "exec") )
     {
         default_access = XENMEM_access_rw;
@@ -697,7 +703,9 @@ int main(int argc, char *argv[])
             shutting_down = 1;
         }
 
-        rc = xc_wait_for_event_or_timeout(xch, xenaccess->vm_event.xce_handle, 100);
+        DPRINTF("Waiting for event\n");
+
+        rc = xc_wait_for_event_or_timeout(xch, xenaccess->vm_event.xce_handle, 5000);
         if ( rc < -1 )
         {
             ERROR("Error getting event");
@@ -768,8 +776,15 @@ int main(int argc, char *argv[])
                 }
                 else if ( default_access != after_first_access )
                 {
-                    rc = xc_set_mem_access(xch, domain_id, after_first_access,
-                                           req.u.mem_access.gfn, 1);
+                        printf("Emulating read access\n");
+                        rsp.reason = req.reason;
+                        rsp.flags |= VM_EVENT_FLAG_EMULATE;
+                        rsp.u.mem_access = req.u.mem_access;
+                        rc = 0;
+
+//                        rc = xc_set_mem_access(xch, domain_id, after_first_access,
+//                                           req.u.mem_access.gfn, 1);
+
                     if (rc < 0)
                     {
                         ERROR("Error %d setting gfn to access_type %d\n", rc,
