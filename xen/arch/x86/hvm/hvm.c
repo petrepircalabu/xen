@@ -4410,6 +4410,7 @@ static int do_altp2m_op(
     case HVMOP_altp2m_destroy_p2m:
     case HVMOP_altp2m_switch_p2m:
     case HVMOP_altp2m_set_mem_access:
+    case HVMOP_altp2m_set_mem_access_multi:
     case HVMOP_altp2m_change_gfn:
         break;
     default:
@@ -4525,6 +4526,30 @@ static int do_altp2m_op(
             rc = p2m_set_mem_access(d, _gfn(a.u.set_mem_access.gfn), 1, 0, 0,
                                     a.u.set_mem_access.hvmmem_access,
                                     a.u.set_mem_access.view);
+        break;
+
+    case HVMOP_altp2m_set_mem_access_multi:
+        if ( a.u.set_mem_access_multi.pad ||
+             a.u.set_mem_access_multi.opaque >= a.u.set_mem_access_multi.nr )
+        {
+            rc = -EINVAL;
+            break;
+        }
+        rc = p2m_set_mem_access_multi(d, a.u.set_mem_access_multi.pfn_list,
+                                      a.u.set_mem_access_multi.access_list,
+                                      a.u.set_mem_access_multi.nr,
+                                      a.u.set_mem_access_multi.opaque,
+                                      MEMOP_CMD_MASK,
+                                      a.u.set_mem_access_multi.view);
+        if ( rc > 0 )
+        {
+            a.u.set_mem_access_multi.opaque = rc;
+            if ( __copy_to_guest(arg, &a, 1) )
+                rc = -EFAULT;
+            else
+                rc = hypercall_create_continuation(__HYPERVISOR_hvm_op, "lh",
+                                                   HVMOP_altp2m, arg);
+        }
         break;
 
     case HVMOP_altp2m_change_gfn:

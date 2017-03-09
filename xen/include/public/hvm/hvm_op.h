@@ -237,6 +237,23 @@ struct xen_hvm_altp2m_set_mem_access {
 typedef struct xen_hvm_altp2m_set_mem_access xen_hvm_altp2m_set_mem_access_t;
 DEFINE_XEN_GUEST_HANDLE(xen_hvm_altp2m_set_mem_access_t);
 
+struct xen_hvm_altp2m_set_mem_access_multi {
+    /* view */
+    uint16_t view;
+    uint16_t pad;
+    /* Number of pages */
+    uint32_t nr;
+    /* Used for continuation purposes */
+    uint64_t opaque;
+    /* List of pfns to set access for */
+    XEN_GUEST_HANDLE(const_uint64) pfn_list;
+    /* Corresponding list of access settings for pfn_list */
+    XEN_GUEST_HANDLE(const_uint8) access_list;
+};
+typedef struct xen_hvm_altp2m_set_mem_access_multi
+    xen_hvm_altp2m_set_mem_access_multi_t;
+DEFINE_XEN_GUEST_HANDLE(xen_hvm_altp2m_set_mem_access_multi_t);
+
 struct xen_hvm_altp2m_change_gfn {
     /* view */
     uint16_t view;
@@ -268,15 +285,18 @@ struct xen_hvm_altp2m_op {
 #define HVMOP_altp2m_set_mem_access       7
 /* Change a p2m entry to have a different gfn->mfn mapping */
 #define HVMOP_altp2m_change_gfn           8
+/* Set access for an array of pages */
+#define HVMOP_altp2m_set_mem_access_multi 9
     domid_t domain;
     uint16_t pad1;
     uint32_t pad2;
     union {
-        struct xen_hvm_altp2m_domain_state       domain_state;
-        struct xen_hvm_altp2m_vcpu_enable_notify enable_notify;
-        struct xen_hvm_altp2m_view               view;
-        struct xen_hvm_altp2m_set_mem_access     set_mem_access;
-        struct xen_hvm_altp2m_change_gfn         change_gfn;
+        struct xen_hvm_altp2m_domain_state         domain_state;
+        struct xen_hvm_altp2m_vcpu_enable_notify   enable_notify;
+        struct xen_hvm_altp2m_view                 view;
+        struct xen_hvm_altp2m_set_mem_access       set_mem_access;
+        struct xen_hvm_altp2m_change_gfn           change_gfn;
+        struct xen_hvm_altp2m_set_mem_access_multi set_mem_access_multi;
         uint8_t pad[64];
     } u;
 };
