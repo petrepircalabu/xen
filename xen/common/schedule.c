@@ -521,6 +521,8 @@ void vcpu_unblock(struct vcpu *v)
     if ( !test_and_clear_bit(_VPF_blocked, &v->pause_flags) )
         return;
 
+    TRACE_0D(TRC_HVM_VASILE);
+
     /* Polling period ends when a VCPU is unblocked. */
     if ( unlikely(v->poll_evtchn != 0) )
     {
