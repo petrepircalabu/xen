@@ -241,6 +241,9 @@
 #define TRC_HVM_IOPORT_WRITE    (TRC_HVM_HANDLER + 0x216)
 #define TRC_HVM_IOMEM_WRITE     (TRC_HVM_HANDLER + 0x217)
 
+#define TRC_HVM_GOGU            (TRC_HVM_HANDLER + 0x30)
+#define TRC_HVM_VASILE          (TRC_HVM_HANDLER + 0x31)
+
 /* Trace events for emulated devices */
 #define TRC_HVM_EMUL_HPET_START_TIMER  (TRC_HVM_EMUL + 0x1)
 #define TRC_HVM_EMUL_PIT_START_TIMER   (TRC_HVM_EMUL + 0x2)

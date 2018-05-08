@@ -945,6 +945,8 @@ enum {
     HVM_EVENT_TRAP,
     HVM_EVENT_TRAP_DEBUG,
     HVM_EVENT_VLAPIC,
+    HVM_EVENT_GOGU=0x30,
+    HVM_EVENT_VASILE,
     HVM_EVENT_HANDLER_MAX
 };
 char * hvm_event_handler_name[HVM_EVENT_HANDLER_MAX] = {
@@ -980,7 +982,9 @@ char * hvm_event_handler_name[HVM_EVENT_HANDLER_MAX] = {
     "realmode_emulate",
     "trap",
     "trap_debug",
-    "vlapic"
+    "vlapic",
+    "gogu",
+    "vasile"
 };
 
 enum {
@@ -4797,6 +4801,10 @@ needs_vmexit:
     h->event_handler = ri->event - TRC_HVM_HANDLER;
 
     switch(ri->event) {
+    case TRC_HVM_GOGU:
+    case TRC_HVM_VASILE:
+            hvm_generic_dump(ri, "]");
+	    break;
         /* Records adding to the vmexit reason */
     case TRC_HVM_INTR:
         hvm_intr_process(ri, h);
