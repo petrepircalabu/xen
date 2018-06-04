@@ -103,6 +103,7 @@
 #include <xen/efi.h>
 #include <xen/grant_table.h>
 #include <xen/hypercall.h>
+#include <xen/vm_event.h>
 #include <asm/paging.h>
 #include <asm/shadow.h>
 #include <asm/page.h>
@@ -4339,6 +4340,28 @@ int arch_acquire_resource(struct domain *d, unsigned int type,
          * The frames will have been assigned to the domain that created
          * the ioreq server.
          */
+        *flags |= XENMEM_rsrc_acq_caller_owned;
+        break;
+    }
+
+    case XENMEM_resource_vm_event:
+    {
+        mfn_t mfn;
+        rc = 0;
+
+        printk("[DEBUG] arch_acquire_resource: XENMEM_resource_vm_event. nr_frames = %d\n", nr_frames);
+
+        if( !vm_event_check_ring(d->vm_event_monitor) )
+        {
+            printk("[DEBUG] XENMEM_resource_vm_event returned -ENODEV.\n");
+            rc = -ENODEV;
+            break;
+        }
+
+        mfn = page_to_mfn(d->vm_event_monitor->ring_pg_struct);
+        mfn_list[0] = mfn_x(mfn);
+
+        printk("[DEBUG] mfn_list[0] = 0x%016lX.\n", mfn_list[0]);
         *flags |= XENMEM_rsrc_acq_caller_owned;
         break;
     }

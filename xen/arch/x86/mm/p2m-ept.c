@@ -368,7 +368,10 @@ static int ept_next_level(struct p2m_domain *p2m, bool_t read_only,
             return GUEST_TABLE_MAP_FAILED;
 
         if ( !ept_set_middle_entry(p2m, ept_entry) )
+        {
+            printk("[DEBUG] ept_next_level Checkpoint2.\n");
             return GUEST_TABLE_MAP_FAILED;
+        }
         else
             e = atomic_read_ept_entry(ept_entry); /* Refresh */
     }
@@ -726,6 +729,7 @@ ept_set_entry(struct p2m_domain *p2m, gfn_t gfn_, mfn_t mfn,
         ret = ept_next_level(p2m, 0, &table, &gfn_remainder, i);
         if ( !ret )
         {
+            printk("[DEBUG] ept_next_level failed: returning ENOENT.\n");
             rc = -ENOENT;
             goto out;
         }

@@ -1038,16 +1038,25 @@ static int acquire_resource(
 
     if ( !paging_mode_translate(currd) )
     {
+        printk("[DEBUG] NOT paging_mode_translate.\n");
+        printk("[DEBUG] mfn_list[0] = 0x%016lx.\n", mfn_list[0]);
         if ( copy_to_guest(xmar.frame_list, mfn_list, xmar.nr_frames) )
+        {
+            printk("[ERROR] copy_to_guest.\n");
             rc = -EFAULT;
+        }
     }
     else
     {
         xen_pfn_t gfn_list[ARRAY_SIZE(mfn_list)];
         unsigned int i;
 
+        printk("[DEBUG] paging_mode_translate.\n");
         if ( copy_from_guest(gfn_list, xmar.frame_list, xmar.nr_frames) )
+        {
+            printk("[ERROR] copy_to_guest.\n");
             rc = -EFAULT;
+        }
 
         for ( i = 0; !rc && i < xmar.nr_frames; i++ )
         {

@@ -565,6 +565,8 @@ int main(int argc, char *argv[])
             goto exit;
         }
 
+        printf("START_PFN = %lld , (xenaccess->max_gpfn - START_PFN) = %lld.\n", START_PFN,
+                               (xenaccess->max_gpfn - START_PFN));
         rc = xc_set_mem_access(xch, domain_id, default_access, START_PFN,
                                (xenaccess->max_gpfn - START_PFN) );
 

@@ -39,6 +39,51 @@
 #define vm_event_ring_lock(_ved)       spin_lock(&(_ved)->ring_lock)
 #define vm_event_ring_unlock(_ved)     spin_unlock(&(_ved)->ring_lock)
 
+static int vm_event_alloc_mfn(struct domain *d, struct vm_event_domain *ved)
+{
+    printk("[DEBUG] vm_event_alloc_mfn.\n");
+
+    /* ved->ring_pg_struct = alloc_domheap_page(d, MEMF_no_refcount); */
+    ved->ring_pg_struct = alloc_domheap_page(d, 0);
+    if ( !ved->ring_pg_struct )
+    {
+        printk("[DEBUG] alloc_domheap_page failed.\n");
+        return -ENOMEM;
+    }
+
+    if ( !get_page_type(ved->ring_pg_struct, PGT_writable_page) )
+        goto fail1;
+
+    ved->ring_page = __map_domain_page_global(ved->ring_pg_struct);
+    if ( !ved->ring_page )
+        goto fail2;
+
+    clear_page(ved->ring_page);
+    return 0;
+
+fail2:
+    put_page_type(ved->ring_page);
+
+fail1:
+    put_page(ved->ring_pg_struct);
+    ved->ring_pg_struct = NULL;
+
+    return -ENOMEM;
+}
+
+static void vm_event_free_mfn(struct vm_event_domain *ved)
+{
+    printk("[DEBUG] vm_event_free_mfn.\n");
+    if ( !ved->ring_pg_struct )
+        return;
+
+    unmap_domain_page_global(ved->ring_page);
+    ved->ring_page = NULL;
+
+    put_page_and_type(ved->ring_pg_struct);
+    ved->ring_pg_struct = NULL;
+}
+
 static int vm_event_enable(
     struct domain *d,
     struct xen_domctl_vm_event_op *vec,
@@ -48,23 +93,32 @@ static int vm_event_enable(
     xen_event_channel_notification_t notification_fn)
 {
     int rc;
-    unsigned long ring_gfn = d->arch.hvm_domain.params[param];
+    /* unsigned long ring_gfn = d->arch.hvm_domain.params[param]; */
 
     if ( !*ved )
+    {
+        printk("[DEBUG]Allocate space for ved.\n");
         *ved = xzalloc(struct vm_event_domain);
+    }
     if ( !*ved )
+    {
+        printk("[DEBUG]Failure to allocate ved.\n");
         return -ENOMEM;
+    }
 
     /* Only one helper at a time. If the helper crashed,
      * the ring is in an undefined state and so is the guest.
      */
     if ( (*ved)->ring_page )
+    {
+        printk("[DEBUG]page already allocated.\n");
         return -EBUSY;;
+    }
 
     /* The parameter defaults to zero, and it should be
      * set to something */
-    if ( ring_gfn == 0 )
-        return -ENOSYS;
+    /* if ( ring_gfn == 0 )
+        return -ENOSYS; */
 
     vm_event_ring_lock_init(*ved);
     vm_event_ring_lock(*ved);
@@ -74,10 +128,19 @@ static int vm_event_enable(
     if ( rc < 0 )
         goto err;
 
+/*
     rc = prepare_ring_for_helper(d, ring_gfn, &(*ved)->ring_pg_struct,
                                  &(*ved)->ring_page);
     if ( rc < 0 )
         goto err;
+        */
+
+    rc = vm_event_alloc_mfn(d, *ved);
+    if ( rc < 0 )
+    {
+        printk("[DEBUG] vm_event_alloc_mfn failed ");
+	goto err;
+    }
 
     /* Set the number of currently blocked vCPUs to 0. */
     (*ved)->blocked = 0;
@@ -105,8 +168,13 @@ static int vm_event_enable(
     return 0;
 
  err:
+    printk("[DEBUG] error on vm_event_enable.\n");
+    /*
     destroy_ring_for_helper(&(*ved)->ring_page,
                             (*ved)->ring_pg_struct);
+    */
+    vm_event_free_mfn(*ved);
+    printk("[DEBUG] (*ved)->ring_page = %p.\n", (*ved)->ring_page);
     vm_event_ring_unlock(*ved);
     xfree(*ved);
     *ved = NULL;
@@ -196,6 +264,7 @@ void vm_event_wake(struct domain *d, struct vm_event_domain *ved)
 
 static int vm_event_disable(struct domain *d, struct vm_event_domain **ved)
 {
+    printk("[DEBUG] vm_event_disable.\n");
     if ( vm_event_check_ring(*ved) )
     {
         struct vcpu *v;
@@ -205,6 +274,7 @@ static int vm_event_disable(struct domain *d, struct vm_event_domain **ved)
         if ( !list_empty(&(*ved)->wq.list) )
         {
             vm_event_ring_unlock(*ved);
+            printk("[DEBUG] vm_event_disable list not empty.\n");
             return -EBUSY;
         }
 
@@ -221,9 +291,13 @@ static int vm_event_disable(struct domain *d, struct vm_event_domain **ved)
             }
         }
 
+	/*
         destroy_ring_for_helper(&(*ved)->ring_page,
                                 (*ved)->ring_pg_struct);
+				*/
+	vm_event_free_mfn(*ved);
 
+        printk("[DEBUG] vm_event_disable (*ved)->ring_page = %p.\n", (*ved)->ring_page);
         vm_event_cleanup_domain(d);
 
         vm_event_ring_unlock(*ved);

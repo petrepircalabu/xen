@@ -62,6 +62,7 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
         return NULL;
     }
 
+#if 0
     /* Get the pfn of the ring page */
     rc1 = xc_hvm_param_get(xch, domain_id, param, &pfn);
     if ( rc1 != 0 )
@@ -93,6 +94,7 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
         PERROR("Could not map the ring page\n");
         goto out;
     }
+#endif
 
     switch ( param )
     {
@@ -128,10 +130,45 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
         goto out;
     }
 
+#if 0
     /* Remove the ring_pfn from the guest's physmap */
     rc1 = xc_domain_decrease_reservation_exact(xch, domain_id, 1, 0, &ring_pfn);
     if ( rc1 != 0 )
         PERROR("Failed to remove ring page from guest physmap");
+#endif
+
+    ring_pfn = 0;
+
+    rc1 = xc_mem_acquire_resource_vm_event(xch, domain_id, mode, 1, &pfn);
+    if ( rc1 != 0 )
+    {
+        PERROR("Failed to get the ring_pfn\n");
+        goto out;
+    }
+    PERROR("pfn = 0x%016lX.\n", pfn);
+
+    ring_pfn = pfn;
+    mmap_pfn = pfn;
+    rc1 = xc_get_pfn_type_batch(xch, domain_id, 1, &mmap_pfn);
+    if ( rc1 || mmap_pfn & XEN_DOMCTL_PFINFO_XTAB )
+    {
+        /* Page not in the physmap, try to populate it */
+        rc1 = xc_domain_populate_physmap_exact(xch, domain_id, 1, 0, 0,
+                                              &ring_pfn);
+        if ( rc1 != 0 )
+        {
+            PERROR("Failed to populate ring pfn\n");
+            goto out;
+        }
+    }
+    mmap_pfn = ring_pfn;
+    ring_page = xc_map_foreign_pages(xch, domain_id, PROT_READ | PROT_WRITE,
+                                         &mmap_pfn, 1);
+    if ( !ring_page )
+    {
+        PERROR("Could not map the ring page\n");
+        goto out;
+    }
 
  out:
     saved_errno = errno;
@@ -150,6 +187,7 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
             xenforeignmemory_unmap(xch->fmem, ring_page, 1);
         ring_page = NULL;
 
+	xc_vm_event_control(xch, domain_id, XEN_VM_EVENT_DISABLE, mode, port);
         errno = saved_errno;
     }
 

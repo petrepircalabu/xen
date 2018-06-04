@@ -379,7 +379,10 @@ long p2m_set_mem_access(struct domain *d, gfn_t gfn, uint32_t nr,
         rc = set_mem_access(d, p2m, ap2m, a, _gfn(gfn_l));
 
         if ( rc )
+        {
+            printk("[DEBUG] set_mem_access failed gfn=%ld, rc = %ld.\n",gfn_l, rc);
             break;
+        }
 
         /* Check for continuation if it's not the last iteration. */
         if ( nr > ++start && !(start & mask) && hypercall_preempt_check() )
