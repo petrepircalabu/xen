@@ -2637,6 +2637,11 @@ int xc_livepatch_replace(xc_interface *xch, char *name, uint32_t timeout);
 int xc_domain_cacheflush(xc_interface *xch, uint32_t domid,
                          xen_pfn_t start_pfn, xen_pfn_t nr_pfns);
 
+/*
+ * MOCK domctl
+ */
+void xc_mock_alloc(xc_interface *xch, uint32_t domain_id);
+
 /* Compat shims */
 #include "xenctrl_compat.h"
 

@@ -51,6 +51,7 @@ CTRL_SRCS-$(CONFIG_MiniOS) += xc_minios.c
 CTRL_SRCS-y       += xc_evtchn_compat.c
 CTRL_SRCS-y       += xc_gnttab_compat.c
 CTRL_SRCS-y       += xc_devicemodel_compat.c
+CTRL_SRCS-y       += xc_mock.c
 
 GUEST_SRCS-y :=
 GUEST_SRCS-y += xg_private.c xc_suspend.c
