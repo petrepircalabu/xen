@@ -20,6 +20,7 @@
 #include <xen/console.h>
 #include <xen/iocap.h>
 #include <xen/paging.h>
+#include <xen/mock.h>
 #include <asm/irq.h>
 #include <asm/hvm/hvm.h>
 #include <asm/hvm/support.h>
@@ -1521,6 +1522,10 @@ long arch_do_domctl(
     case XEN_DOMCTL_disable_migrate:
         d->disable_migrate = domctl->u.disable_migrate.disable;
         recalculate_cpuid_policy(d);
+        break;
+
+    case XEN_DOMCTL_mock_op:
+        ret = mock_domctl(d, &domctl->u.mock_op);
         break;
 
     default:
