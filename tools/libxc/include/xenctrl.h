@@ -2640,7 +2640,8 @@ int xc_domain_cacheflush(xc_interface *xch, uint32_t domid,
 /*
  * MOCK domctl
  */
-void xc_mock_alloc(xc_interface *xch, uint32_t domain_id);
+void* xc_mock_alloc(xc_interface *xch, uint32_t domain_id);
+void xc_mock_free(xc_interface *xch, uint32_t domain_id);
 
 /* Compat shims */
 #include "xenctrl_compat.h"

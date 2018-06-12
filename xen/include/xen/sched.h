@@ -491,6 +491,9 @@ struct domain
         unsigned int guest_request_enabled       : 1;
         unsigned int guest_request_sync          : 1;
     } monitor;
+
+    /* Mock domain */
+    struct mock_domain *mock;
 };
 
 /* Protect updates/reads (resp.) of domain_list and domain_hash. */

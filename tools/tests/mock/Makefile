@@ -26,6 +26,6 @@ clean:
 distclean: clean
 
 mock: mock.o Makefile
-	$(CC) -o $@ $< $(LDFLAGS) $(LDLIBS_libxenctrl) $(LDLIBS_libxenguest) $(LDLIBS_libxenevtchn)
+	$(CC) -o $@ $< $(LDFLAGS) $(LDLIBS_libxenctrl) $(LDLIBS_libxenguest) $(LDLIBS_libxenevtchn) $(LDLIBS_libxentoollog)
 
 -include $(DEPS_INCLUDE)

@@ -1098,11 +1098,12 @@ struct xen_domctl_vuart_op {
 /* XEN_DOMCTL_mock_alloc */
 struct xen_domctl_mock_op {
 #define XEN_DOMCTL_MOCK_OP_ALLOC    0
+#define XEN_DOMCTL_MOCK_OP_FREE     1
     uint32_t op;
     union {
         struct {
             uint32_t    size;   /* IN - number of pages */
-            xen_pfn_t   mfn;    /* OUT - mfn */
+            xen_pfn_t   handle; /* OUT - mfn */
         } alloc;
     };
 };

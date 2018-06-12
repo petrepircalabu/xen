@@ -11,6 +11,7 @@
 #include <poll.h>
 
 #include <xenctrl.h>
+#include <xentoollog.h>
 
 #define DPRINTF(a, b...) fprintf(stderr, a, ## b)
 #define ERROR(a, b...) fprintf(stderr, a "\n", ## b)
@@ -19,7 +20,11 @@
 int main(int argc, char *argv[])
 {
     int rc;
-    xc_interface *xch = xc_interface_open(NULL, NULL, 0);
+    xentoollog_logger *log = (xentoollog_logger *)xtl_createlogger_stdiostream(stderr, XTL_DEBUG, 0);
+    void *page = NULL;
+    char *buf;
+
+    xc_interface *xch = xc_interface_open(log, NULL, 0);
     domid_t domain_id;
 
     argv++;
@@ -32,8 +37,21 @@ int main(int argc, char *argv[])
         ERROR("Cannot open the xc_interface handle");
         return -1;
     }
-    printf("Testing MOCK domctl...");
-    xc_mock_alloc(xch, domain_id);
+
+    DPRINTF("Testing MOCK domctl...\n");
+    page = xc_mock_alloc(xch, domain_id);
+    if (!page)
+    {
+        ERROR("xc_mock_alloc failed.\n");
+        goto out;
+    }
+
+    buf = (char*) page;
+
+    printf("%s.\n", buf);
+
+out:
+    xc_mock_free(xch, domain_id);
 
     rc = xc_interface_close(xch);
     if ( rc != 0 )
