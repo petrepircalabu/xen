@@ -69,7 +69,8 @@ static int mock_disable(struct domain *d, struct xen_domctl_mock_op *mop)
     return 0;
 }
 
-int mock_domctl(struct domain *d, struct xen_domctl_mock_op *mop)
+int mock_domctl(struct domain *d, struct xen_domctl_mock_op *mop,
+        XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
 {
     int rc = 0;
 

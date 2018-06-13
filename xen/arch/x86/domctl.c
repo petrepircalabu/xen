@@ -1525,7 +1525,8 @@ long arch_do_domctl(
         break;
 
     case XEN_DOMCTL_mock_op:
-        ret = mock_domctl(d, &domctl->u.mock_op);
+        ret = mock_domctl(d, &domctl->u.mock_op, u_domctl);
+        copyback = true;
         break;
 
     default:

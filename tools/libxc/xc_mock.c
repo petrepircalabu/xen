@@ -13,6 +13,7 @@ void* xc_mock_alloc(xc_interface *xch, uint32_t domain_id)
     domctl.domain = domain_id;
     domctl.u.mock_op.op = XEN_DOMCTL_MOCK_OP_ALLOC;
     domctl.u.mock_op.alloc.size = 0;
+    domctl.u.mock_op.alloc.handle = 0;
 
     rc = do_domctl(xch, &domctl);
     if ( rc )
@@ -22,6 +23,8 @@ void* xc_mock_alloc(xc_interface *xch, uint32_t domain_id)
     }
 
     mmap_pfn = domctl.u.mock_op.alloc.handle;
+
+    DBGPRINTF("%s: mmap_pfn = 0x%lX.\n", __func__, mmap_pfn);
 
     ring_page = xc_map_foreign_pages(xch, domain_id, PROT_READ | PROT_WRITE, &mmap_pfn, 1);
     if ( !ring_page )
