@@ -22,11 +22,20 @@ void* xc_mock_alloc(xc_interface *xch, uint32_t domain_id)
         goto out;
     }
 
-    mmap_pfn = domctl.u.mock_op.alloc.handle;
+    //mmap_pfn = domctl.u.mock_op.alloc.handle;
+
+    rc = xc_mem_acquire_resource_mock(xch, domain_id, 0, 1, &mmap_pfn);
+    if ( rc )
+    {
+        PERROR("%s: xc_mem_acquire_resource_mock rc = %d.\n", __func__, rc);
+        goto out;
+    }
+
+    //mmap_pfn = domctl.u.mock_op.alloc.handle;
 
     DBGPRINTF("%s: mmap_pfn = 0x%lX.\n", __func__, mmap_pfn);
 
-    ring_page = xc_map_foreign_pages(xch, domain_id, PROT_READ | PROT_WRITE, &mmap_pfn, 1);
+    ring_page = xc_map_foreign_pages(xch, 0, PROT_READ | PROT_WRITE, &mmap_pfn, 1);
     if ( !ring_page )
     {
         PERROR("Could not map the ring page\n");

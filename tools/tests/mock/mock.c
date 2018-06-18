@@ -48,7 +48,7 @@ int main(int argc, char *argv[])
 
     buf = (char*) page;
 
-    printf("%s.\n", buf);
+    printf("%d %d %d.\n", buf[0], buf[1], buf[2]);
 
 out:
     xc_mock_free(xch, domain_id);

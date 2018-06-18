@@ -103,6 +103,7 @@
 #include <xen/efi.h>
 #include <xen/grant_table.h>
 #include <xen/hypercall.h>
+#include <xen/mock.h>
 #include <asm/paging.h>
 #include <asm/shadow.h>
 #include <asm/page.h>
@@ -4338,6 +4339,29 @@ int arch_acquire_resource(struct domain *d, unsigned int type,
          * The frames will have been assigned to the domain that created
          * the ioreq server.
          */
+        *flags |= XENMEM_rsrc_acq_caller_owned;
+        break;
+    }
+
+    case XENMEM_resource_mock:
+    {
+        rc = 0;
+
+        if ( !d->mock || !d->mock->page)
+        {
+            gdprintk(XENLOG_WARNING, "Mock page not allocated.\n");
+            rc = -EINVAL;
+            break;
+        }
+
+        mfn_list[0] = mfn_x(page_to_mfn(d->mock->pg_struct));
+
+        printk("[DEBUG] XENMEM_resource_mock Handle = 0x%lX.\n", mfn_list[0]);
+
+	share_xen_page_with_guest(d->mock->pg_struct, current->domain, SHARE_rw);
+
+	printk("[DEBUG] page shared with domain %d.\n", current->domain->domain_id);
+
         *flags |= XENMEM_rsrc_acq_caller_owned;
         break;
     }

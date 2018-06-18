@@ -610,7 +610,8 @@ struct xen_mem_acquire_resource {
     /* IN - the type of resource */
     uint16_t type;
 
-#define XENMEM_resource_ioreq_server 0
+#define XENMEM_resource_ioreq_server    0
+#define XENMEM_resource_mock            1
 
     /*
      * IN - a type-specific resource identifier, which must be zero
