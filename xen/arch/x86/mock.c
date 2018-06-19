@@ -59,10 +59,12 @@ static int mock_disable(struct domain *d, struct xen_domctl_mock_op *mop)
 
     if ( d->mock->page )
     {
+	printk("[DEBUG] free_xenheap_page(d->mock->page)\n");
         free_xenheap_page(d->mock->page);
         d->mock->page = NULL;
     }
 
+    printk("[DEBUG] xfree(d->mock)\n");
     xfree(d->mock);
     d->mock = NULL;
 

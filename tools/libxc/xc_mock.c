@@ -1,10 +1,13 @@
 #include "xc_private.h"
+#include "xenforeignmemory.h"
+
+static xenforeignmemory_resource_handle *fres;
 
 void* xc_mock_alloc(xc_interface *xch, uint32_t domain_id)
 {
     DECLARE_DOMCTL;
     void *ring_page = NULL;
-    xen_pfn_t mmap_pfn;
+    /*xen_pfn_t mmap_pfn;*/
     int rc;
 
     DBGPRINTF("%s: .\n", __func__);
@@ -23,6 +26,15 @@ void* xc_mock_alloc(xc_interface *xch, uint32_t domain_id)
     }
 
     //mmap_pfn = domctl.u.mock_op.alloc.handle;
+    fres = xenforeignmemory_map_resource(xch->fmem, domain_id, XENMEM_resource_mock, 0, 0, 1, &ring_page, PROT_READ | PROT_WRITE, 0);
+
+    if ( !fres )
+    {
+	PERROR("%s: xenforeignmemory_map_resource failed: error %d", __func__, errno);
+	return NULL;
+    }
+
+#if 0
 
     rc = xc_mem_acquire_resource_mock(xch, domain_id, 0, 1, &mmap_pfn);
     if ( rc )
@@ -30,6 +42,7 @@ void* xc_mock_alloc(xc_interface *xch, uint32_t domain_id)
         PERROR("%s: xc_mem_acquire_resource_mock rc = %d.\n", __func__, rc);
         goto out;
     }
+
 
     //mmap_pfn = domctl.u.mock_op.alloc.handle;
 
@@ -41,6 +54,8 @@ void* xc_mock_alloc(xc_interface *xch, uint32_t domain_id)
         PERROR("Could not map the ring page\n");
         goto out;
     }
+#endif
+
 
 out:
     return ring_page;
@@ -52,6 +67,18 @@ void xc_mock_free(xc_interface *xch, uint32_t domain_id)
     int rc;
 
     DBGPRINTF("%s: .\n", __func__);
+
+    if (!fres)
+    {
+	PERROR("Foreign resource not mapped\n");
+	return;
+    }
+
+    rc = xenforeignmemory_unmap_resource(xch->fmem, fres);
+    if (rc)
+    {
+	PERROR("Failed to unmap resource\n");
+    }
 
     domctl.cmd = XEN_DOMCTL_mock_op;
     domctl.domain = domain_id;
