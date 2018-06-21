@@ -457,6 +457,12 @@ libxl_altp2m_mode = Enumeration("altp2m_mode", [
     (3, "limited"),
     ], init_val = "LIBXL_ALTP2M_MODE_DISABLED")
 
+libxl_vm_event_params = Struct("vm_event_params", [
+    ("paging_ring_order",  uint32, {'init_val': 'LIBXL_VM_EVENT_PAGING_RING_ORDER_DEFAULT'}),
+    ("monitor_ring_order", uint32, {'init_val': 'LIBXL_VM_EVENT_MONITOR_RING_ORDER_DEFAULT'}),
+    ("sharing_ring_order", uint32, {'init_val': 'LIBXL_VM_EVENT_SHARING_RING_ORDER_DEFAULT'}),
+    ])
+
 libxl_domain_build_info = Struct("domain_build_info",[
     ("max_vcpus",       integer),
     ("avail_vcpus",     libxl_bitmap),
@@ -608,6 +614,7 @@ libxl_domain_build_info = Struct("domain_build_info",[
     # supported by x86 HVM and ARM support is planned.
     ("altp2m", libxl_altp2m_mode),
 
+    ("vm_event_params", libxl_vm_event_params),
     ], dir=DIR_IN,
        copy_deprecated_fn="libxl__domain_build_info_copy_deprecated",
 )

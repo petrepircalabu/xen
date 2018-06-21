@@ -2405,6 +2405,11 @@ int libxl_fd_set_nonblock(libxl_ctx *ctx, int fd, int nonblock);
 int libxl_qemu_monitor_command(libxl_ctx *ctx, uint32_t domid,
                                const char *command_line, char **output);
 
+/* VM_EVENT */
+#define LIBXL_VM_EVENT_PAGING_RING_ORDER_DEFAULT        0
+#define LIBXL_VM_EVENT_MONITOR_RING_ORDER_DEFAULT       0
+#define LIBXL_VM_EVENT_SHARING_RING_ORDER_DEFAULT       0
+
 #include <libxl_event.h>
 
 #endif /* LIBXL_H */
