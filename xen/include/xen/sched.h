@@ -301,6 +301,12 @@ struct vm_event_domain
     unsigned int blocked;
     /* The last vcpu woken up */
     unsigned int last_vcpu_wake_up;
+    /*
+     * The number of xenheap pages allocated for the vm_event ring buffer.
+     * If the value is less than or equal to 0, the ring_buffer will use the
+     * domain's page specified in the HVM params.
+     */
+    int xenheap_ring_pages;
 };
 
 struct evtchn_port_ops;

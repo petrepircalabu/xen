@@ -755,6 +755,15 @@ struct xen_domctl_gdbsx_domstatus {
 #define XEN_VM_EVENT_ENABLE               0
 #define XEN_VM_EVENT_DISABLE              1
 #define XEN_VM_EVENT_RESUME               2
+#define XEN_VM_EVENT_GET_PORT             3
+
+/* Supported VM_EVENT types */
+enum xen_vm_event_type {
+    VM_EVENT_PAGING,
+    VM_EVENT_MONITOR,
+    VM_EVENT_SHARING,
+    VM_EVENT_COUNT
+};
 
 /*
  * Domain memory paging

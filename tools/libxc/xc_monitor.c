@@ -24,7 +24,7 @@
 
 void *xc_monitor_enable(xc_interface *xch, uint32_t domain_id, uint32_t *port)
 {
-    return xc_vm_event_enable(xch, domain_id, HVM_PARAM_MONITOR_RING_PFN,
+    return xc_vm_event_enable(xch, domain_id, VM_EVENT_MONITOR,
                               port);
 }
 

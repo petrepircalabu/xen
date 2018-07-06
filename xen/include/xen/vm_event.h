@@ -80,6 +80,10 @@ void vm_event_set_registers(struct vcpu *v, vm_event_response_t *rsp);
 
 void vm_event_monitor_next_interrupt(struct vcpu *v);
 
+int vm_event_get_ring_frames(struct domain *d, unsigned int id,
+                             unsigned long frame, unsigned int nr_frames,
+                             xen_pfn_t mfn_list[]);
+
 #endif /* __VM_EVENT_H__ */
 
 /*

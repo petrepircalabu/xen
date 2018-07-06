@@ -39,13 +39,189 @@ int xc_vm_event_control(xc_interface *xch, uint32_t domain_id, unsigned int op,
     return rc;
 }
 
-void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
+static int xc_vm_event_domctl(int type, unsigned int *domctl)
+{
+    const unsigned int domctls[VM_EVENT_COUNT] = {
+        XEN_DOMCTL_VM_EVENT_OP_PAGING,
+        XEN_DOMCTL_VM_EVENT_OP_MONITOR,
+        XEN_DOMCTL_VM_EVENT_OP_SHARING
+    };
+
+    if ( !domctl || type < 0 || type >= VM_EVENT_COUNT )
+        return -EINVAL;
+
+
+    *domctl = domctls[type];
+    return 0;
+}
+
+static int xc_vm_event_ring_pfn_param(int type, int *pfn_param)
+{
+    const int pfn_params[VM_EVENT_COUNT] = {
+        HVM_PARAM_PAGING_RING_PFN,
+        HVM_PARAM_MONITOR_RING_PFN,
+        HVM_PARAM_SHARING_RING_PFN
+    };
+
+    if ( !pfn_param || type < 0 || type >= VM_EVENT_COUNT )
+        return -EINVAL;
+
+    *pfn_param = pfn_params[type];
+    return 0;
+}
+
+static int xc_vm_event_ring_frames_param(int type, int *frames_param)
+{
+    const int frames_params[VM_EVENT_COUNT] = {
+        HVM_PARAM_PAGING_RING_FRAMES,
+        HVM_PARAM_MONITOR_RING_FRAMES,
+        HVM_PARAM_SHARING_RING_FRAMES
+    };
+
+    if ( !frames_param || type < 0 || type >= VM_EVENT_COUNT )
+        return -EINVAL;
+
+    *frames_param = frames_params[type];
+    return 0;
+}
+
+static int xc_vm_event_get_ring_page_legacy(xc_interface *xch, uint32_t domain_id,
+                                            int type, uint32_t *port, void **ring)
+{
+    int rc, saved_errno;
+    uint64_t pfn;
+    xen_pfn_t ring_pfn, mmap_pfn;
+    unsigned int mode;
+    int param;
+
+    if ( !ring || xc_vm_event_ring_pfn_param(type, &param) )
+        return -EINVAL;
+
+    /* Get the pfn of the ring page */
+    rc = xc_hvm_param_get(xch, domain_id, param, &pfn);
+    if ( rc != 0 )
+    {
+        PERROR("Failed to get pfn of ring page\n");
+        goto out;
+    }
+
+    ring_pfn = pfn;
+    mmap_pfn = pfn;
+    rc = xc_get_pfn_type_batch(xch, domain_id, 1, &mmap_pfn);
+    if ( rc || mmap_pfn & XEN_DOMCTL_PFINFO_XTAB )
+    {
+        /* Page not in the physmap, try to populate it */
+        rc = xc_domain_populate_physmap_exact(xch, domain_id, 1, 0, 0,
+                                              &ring_pfn);
+        if ( rc != 0 )
+        {
+            PERROR("Failed to populate ring pfn\n");
+            goto out;
+        }
+    }
+
+    mmap_pfn = ring_pfn;
+    *ring = xc_map_foreign_pages(xch, domain_id, PROT_READ | PROT_WRITE,
+                                 &mmap_pfn, 1);
+    if ( !*ring )
+    {
+        PERROR("Could not map the ring page\n");
+        goto out;
+    }
+
+    rc = xc_vm_event_domctl(type, &mode);
+    if ( rc != 0 )
+    {
+        PERROR("Invalid VM_EVENT parameter\n");
+        errno = -rc;
+        rc = -1;
+        goto out;
+    }
+
+    rc = xc_vm_event_control(xch, domain_id, XEN_VM_EVENT_ENABLE, mode, port);
+    if ( rc != 0 )
+    {
+        PERROR("Failed to enable vm_event\n");
+        goto out;
+    }
+
+    /* Remove the ring_pfn from the guest's physmap */
+    rc = xc_domain_decrease_reservation_exact(xch, domain_id, 1, 0, &ring_pfn);
+    if ( rc != 0 )
+    {
+        PERROR("Failed to remove ring page from guest physmap");
+        goto out;
+    }
+
+    return 0;
+
+ out:
+    saved_errno = errno;
+    if ( *ring )
+        xenforeignmemory_unmap(xch->fmem, *ring, 1);
+    *ring = NULL;
+
+    errno = saved_errno;
+
+    return rc;
+}
+
+static int xc_vm_event_get_ring_pages(xc_interface *xch, uint32_t domain_id,
+                                      int type, uint32_t *port, void **ring)
+{
+    xenforeignmemory_resource_handle *fres = NULL;
+    unsigned int mode;
+    int rc;
+    unsigned long nr_frames = 1;
+    int param;
+
+    if ( !ring || xc_vm_event_ring_frames_param(type, &param) )
+        return -EINVAL;
+
+    /* Get the ring frames count param */
+    rc = xc_hvm_param_get(xch, domain_id, param, &nr_frames);
+    if ( rc != 0 )
+    {
+        PERROR("Failed to get pfn of ring page\n");
+        return -EINVAL;
+    }
+
+    fres = xenforeignmemory_map_resource(xch->fmem, domain_id, XENMEM_resource_vm_event,
+                                         type, 0, nr_frames, ring,
+                                         PROT_READ | PROT_WRITE, 0);
+    if ( !fres )
+    {
+        PERROR("%s: xenforeignmemory_map_resource failed: error %d", __func__, errno);
+        return -errno;
+    }
+
+    rc = xc_vm_event_domctl(type, &mode);
+    if ( rc != 0 )
+    {
+        PERROR("Invalid VM_EVENT parameter\n");
+        errno = -rc;
+        rc = -1;
+        goto err;
+    }
+
+    rc = xc_vm_event_control(xch, domain_id, XEN_VM_EVENT_GET_PORT, mode, port);
+    if ( rc != 0 )
+    {
+        PERROR("Failed to get vm_event port\n");
+        goto err;
+    }
+
+    return 0;
+
+err:
+    xenforeignmemory_unmap_resource(xch->fmem, fres);
+    return rc;
+}
+
+void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int type,
                          uint32_t *port)
 {
     void *ring_page = NULL;
-    uint64_t pfn;
-    xen_pfn_t ring_pfn, mmap_pfn;
-    unsigned int op, mode;
     int rc1, rc2, saved_errno;
 
     if ( !port )
@@ -62,78 +238,11 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
         return NULL;
     }
 
-    /* Get the pfn of the ring page */
-    rc1 = xc_hvm_param_get(xch, domain_id, param, &pfn);
-    if ( rc1 != 0 )
-    {
-        PERROR("Failed to get pfn of ring page\n");
-        goto out;
-    }
+    rc1 = xc_vm_event_get_ring_pages(xch, domain_id, type, port, &ring_page);
+    if ( rc1 == EOPNOTSUPP )
+        rc1 = xc_vm_event_get_ring_page_legacy(xch, domain_id, type, port, &ring_page);
 
-    ring_pfn = pfn;
-    mmap_pfn = pfn;
-    rc1 = xc_get_pfn_type_batch(xch, domain_id, 1, &mmap_pfn);
-    if ( rc1 || mmap_pfn & XEN_DOMCTL_PFINFO_XTAB )
-    {
-        /* Page not in the physmap, try to populate it */
-        rc1 = xc_domain_populate_physmap_exact(xch, domain_id, 1, 0, 0,
-                                              &ring_pfn);
-        if ( rc1 != 0 )
-        {
-            PERROR("Failed to populate ring pfn\n");
-            goto out;
-        }
-    }
-
-    mmap_pfn = ring_pfn;
-    ring_page = xc_map_foreign_pages(xch, domain_id, PROT_READ | PROT_WRITE,
-                                         &mmap_pfn, 1);
-    if ( !ring_page )
-    {
-        PERROR("Could not map the ring page\n");
-        goto out;
-    }
-
-    switch ( param )
-    {
-    case HVM_PARAM_PAGING_RING_PFN:
-        op = XEN_VM_EVENT_ENABLE;
-        mode = XEN_DOMCTL_VM_EVENT_OP_PAGING;
-        break;
-
-    case HVM_PARAM_MONITOR_RING_PFN:
-        op = XEN_VM_EVENT_ENABLE;
-        mode = XEN_DOMCTL_VM_EVENT_OP_MONITOR;
-        break;
-
-    case HVM_PARAM_SHARING_RING_PFN:
-        op = XEN_VM_EVENT_ENABLE;
-        mode = XEN_DOMCTL_VM_EVENT_OP_SHARING;
-        break;
-
-    /*
-     * This is for the outside chance that the HVM_PARAM is valid but is invalid
-     * as far as vm_event goes.
-     */
-    default:
-        errno = EINVAL;
-        rc1 = -1;
-        goto out;
-    }
-
-    rc1 = xc_vm_event_control(xch, domain_id, op, mode, port);
-    if ( rc1 != 0 )
-    {
-        PERROR("Failed to enable vm_event\n");
-        goto out;
-    }
-
-    /* Remove the ring_pfn from the guest's physmap */
-    rc1 = xc_domain_decrease_reservation_exact(xch, domain_id, 1, 0, &ring_pfn);
-    if ( rc1 != 0 )
-        PERROR("Failed to remove ring page from guest physmap");
-
- out:
+ /*out:*/
     saved_errno = errno;
 
     rc2 = xc_domain_unpause(xch, domain_id);
@@ -145,10 +254,6 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
                 saved_errno = errno;
             PERROR("Unable to unpause domain");
         }
-
-        if ( ring_page )
-            xenforeignmemory_unmap(xch->fmem, ring_page, 1);
-        ring_page = NULL;
 
         errno = saved_errno;
     }
