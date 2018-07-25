@@ -487,8 +487,19 @@ int libxl__build_pre(libxl__gc *gc, uint32_t domid,
     state->store_port = xc_evtchn_alloc_unbound(ctx->xch, domid, state->store_domid);
     state->console_port = xc_evtchn_alloc_unbound(ctx->xch, domid, state->console_domid);
 
-    if (info->type != LIBXL_DOMAIN_TYPE_PV)
+    if (info->type != LIBXL_DOMAIN_TYPE_PV) {
         hvm_set_conf_params(ctx->xch, domid, info);
+
+        /* Set HVM ring params */
+        xc_hvm_param_set(ctx->xch, domid, HVM_PARAM_PAGING_RING_FRAMES,
+                         info->vm_event_params.paging_ring_frames);
+
+        xc_hvm_param_set(ctx->xch, domid, HVM_PARAM_MONITOR_RING_FRAMES,
+                         info->vm_event_params.monitor_ring_frames);
+
+        xc_hvm_param_set(ctx->xch, domid, HVM_PARAM_SHARING_RING_FRAMES,
+                         info->vm_event_params.sharing_ring_frames);
+    }
 
 #if defined(__i386__) || defined(__x86_64__)
     if (info->type == LIBXL_DOMAIN_TYPE_HVM) {

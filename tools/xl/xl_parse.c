@@ -1784,6 +1784,18 @@ void parse_config_data(const char *config_source,
         }
     }
 
+    if (!xlu_cfg_get_long(config, "paging_ring_frames", &l, 1)) {
+        b_info->vm_event_params.paging_ring_frames = l;
+    }
+
+    if (!xlu_cfg_get_long(config, "monitor_ring_frames", &l, 1)) {
+        b_info->vm_event_params.monitor_ring_frames = l;
+    }
+
+    if (!xlu_cfg_get_long(config, "sharing_ring_frames", &l, 1)) {
+        b_info->vm_event_params.sharing_ring_frames = l;
+    }
+
     if (!xlu_cfg_get_list(config, "ioports", &ioports, &num_ioports, 0)) {
         b_info->num_ioports = num_ioports;
         b_info->ioports = calloc(num_ioports, sizeof(*b_info->ioports));

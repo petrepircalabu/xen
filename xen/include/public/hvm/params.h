@@ -284,6 +284,11 @@
 #define XEN_HVM_MCA_CAP_LMCE   (xen_mk_ullong(1) << 0)
 #define XEN_HVM_MCA_CAP_MASK   XEN_HVM_MCA_CAP_LMCE
 
-#define HVM_NR_PARAMS 39
+/* Params for the mem event rings */
+#define HVM_PARAM_PAGING_RING_FRAMES   39
+#define HVM_PARAM_MONITOR_RING_FRAMES  40
+#define HVM_PARAM_SHARING_RING_FRAMES  41
+
+#define HVM_NR_PARAMS 42
 
 #endif /* __XEN_PUBLIC_HVM_PARAMS_H__ */
