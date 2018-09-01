@@ -23,7 +23,7 @@
 #include "xc_private.h"
 
 int xc_vm_event_control(xc_interface *xch, uint32_t domain_id, unsigned int op,
-                        unsigned int mode, uint32_t *port)
+                        unsigned int type, uint32_t *port)
 {
     DECLARE_DOMCTL;
     int rc;
@@ -31,7 +31,7 @@ int xc_vm_event_control(xc_interface *xch, uint32_t domain_id, unsigned int op,
     domctl.cmd = XEN_DOMCTL_vm_event_op;
     domctl.domain = domain_id;
     domctl.u.vm_event_op.op = op;
-    domctl.u.vm_event_op.mode = mode;
+    domctl.u.vm_event_op.type = type;
 
     rc = do_domctl(xch, &domctl);
     if ( !rc && port )
@@ -39,16 +39,42 @@ int xc_vm_event_control(xc_interface *xch, uint32_t domain_id, unsigned int op,
     return rc;
 }
 
-void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
+static int xc_vm_event_ring_pfn_param(int type, int *param)
+{
+    if ( !param )
+        return -EINVAL;
+
+    switch ( type )
+    {
+    case XEN_VM_EVENT_TYPE_PAGING:
+        *param = HVM_PARAM_PAGING_RING_PFN;
+        break;
+
+    case XEN_VM_EVENT_TYPE_MONITOR:
+        *param = HVM_PARAM_MONITOR_RING_PFN;
+        break;
+
+    case XEN_VM_EVENT_TYPE_SHARING:
+        *param = HVM_PARAM_SHARING_RING_PFN;
+        break;
+
+    default:
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int type,
                          uint32_t *port)
 {
     void *ring_page = NULL;
     uint64_t pfn;
     xen_pfn_t ring_pfn, mmap_pfn;
-    unsigned int op, mode;
     int rc1, rc2, saved_errno;
+    int param;
 
-    if ( !port )
+    if ( !port || xc_vm_event_ring_pfn_param(type, &param) != 0 )
     {
         errno = EINVAL;
         return NULL;
@@ -94,34 +120,7 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
         goto out;
     }
 
-    switch ( param )
-    {
-    case HVM_PARAM_PAGING_RING_PFN:
-        op = XEN_VM_EVENT_ENABLE;
-        mode = XEN_DOMCTL_VM_EVENT_OP_PAGING;
-        break;
-
-    case HVM_PARAM_MONITOR_RING_PFN:
-        op = XEN_VM_EVENT_ENABLE;
-        mode = XEN_DOMCTL_VM_EVENT_OP_MONITOR;
-        break;
-
-    case HVM_PARAM_SHARING_RING_PFN:
-        op = XEN_VM_EVENT_ENABLE;
-        mode = XEN_DOMCTL_VM_EVENT_OP_SHARING;
-        break;
-
-    /*
-     * This is for the outside chance that the HVM_PARAM is valid but is invalid
-     * as far as vm_event goes.
-     */
-    default:
-        errno = EINVAL;
-        rc1 = -1;
-        goto out;
-    }
-
-    rc1 = xc_vm_event_control(xch, domain_id, op, mode, port);
+    rc1 = xc_vm_event_control(xch, domain_id, XEN_VM_EVENT_ENABLE, type, port);
     if ( rc1 != 0 )
     {
         PERROR("Failed to enable vm_event\n");
