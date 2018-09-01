@@ -1,8 +1,8 @@
 /******************************************************************************
  * domctl.h
- *
+ * 
  * Domain management operations. For use by node control stack.
- *
+ * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
  * deal in the Software without restriction, including without limitation the
@@ -769,18 +769,9 @@ struct xen_domctl_gdbsx_domstatus {
  * VM event operations
  */
 
-/* XEN_DOMCTL_vm_event_op */
-
 /*
- * There are currently three rings available for VM events:
- * sharing, monitor and paging. This hypercall allows one to
- * control these rings (enable/disable), as well as to signal
- * to the hypervisor to pull responses (resume) from the given
- * ring.
+ * There are currently three types of rings available for VM events.
  */
-#define XEN_VM_EVENT_ENABLE               0
-#define XEN_VM_EVENT_DISABLE              1
-#define XEN_VM_EVENT_RESUME               2
 
 /*
  * Domain memory paging
@@ -796,7 +787,7 @@ struct xen_domctl_gdbsx_domstatus {
  * EXDEV  - guest has PoD enabled
  * EBUSY  - guest has or had paging enabled, ring buffer still active
  */
-#define XEN_DOMCTL_VM_EVENT_OP_PAGING            1
+#define XEN_VM_EVENT_TYPE_PAGING         1
 
 /*
  * Monitor helper.
@@ -820,7 +811,7 @@ struct xen_domctl_gdbsx_domstatus {
  * EBUSY  - guest has or had access enabled, ring buffer still active
  *
  */
-#define XEN_DOMCTL_VM_EVENT_OP_MONITOR           2
+#define XEN_VM_EVENT_TYPE_MONITOR        2
 
 /*
  * Sharing ENOMEM helper.
@@ -835,15 +826,27 @@ struct xen_domctl_gdbsx_domstatus {
  * Note that shring can be turned on (as per the domctl below)
  * *without* this ring being setup.
  */
-#define XEN_DOMCTL_VM_EVENT_OP_SHARING           3
+#define XEN_VM_EVENT_TYPE_SHARING        3
 
-/* Use for teardown/setup of helper<->hypervisor interface for paging,
- * access and sharing.*/
+/*
+ * This hypercall allows one to control the vm_event rings (enable/disable),
+ * as well as to signal to the hypervisor to pull responses (resume) and
+ * retrieve the event channel from the given ring.
+ */
+#define XEN_VM_EVENT_ENABLE               0
+#define XEN_VM_EVENT_DISABLE              1
+#define XEN_VM_EVENT_RESUME               2
+
+/*
+ * Use for teardown/setup of helper<->hypervisor interface for paging,
+ * access and sharing.
+ */
+/* XEN_DOMCTL_vm_event_op */
 struct xen_domctl_vm_event_op {
-    uint32_t       op;           /* XEN_VM_EVENT_* */
-    uint32_t       mode;         /* XEN_DOMCTL_VM_EVENT_OP_* */
+    uint32_t        op;           /* XEN_VM_EVENT_* */
+    uint32_t        type;         /* XEN_VM_EVENT_TYPE_* */
 
-    uint32_t port;              /* OUT: event channel for ring */
+    uint32_t        port;         /* OUT: event channel for ring */
 };
 
 /*
@@ -997,7 +1000,7 @@ struct xen_domctl_psr_cmt_op {
  * Enable/disable monitoring various VM events.
  * This domctl configures what events will be reported to helper apps
  * via the ring buffer "MONITOR". The ring has to be first enabled
- * with the domctl XEN_DOMCTL_VM_EVENT_OP_MONITOR.
+ * with XEN_VM_EVENT_ENABLE.
  *
  * GET_CAPABILITIES can be used to determine which of these features is
  * available on a given platform.
