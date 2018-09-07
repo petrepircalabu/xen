@@ -68,7 +68,8 @@ typedef struct vm_event {
     int port;
     vm_event_back_ring_t back_ring;
     uint32_t evtchn_port;
-    void *ring_page;
+    void *ring_buffer;
+    unsigned int ring_page_count;
 } vm_event_t;
 
 typedef struct xenaccess {
@@ -136,8 +137,9 @@ int xenaccess_teardown(xc_interface *xch, xenaccess_t *xenaccess)
         return 0;
 
     /* Tear down domain xenaccess in Xen */
-    if ( xenaccess->vm_event.ring_page )
-        munmap(xenaccess->vm_event.ring_page, XC_PAGE_SIZE);
+    if ( xenaccess->vm_event.ring_buffer )
+        munmap(xenaccess->vm_event.ring_buffer,
+               xenaccess->vm_event.ring_page_count * XC_PAGE_SIZE );
 
     if ( mem_access_enable )
     {
@@ -210,12 +212,25 @@ xenaccess_t *xenaccess_init(xc_interface **xch_r, domid_t domain_id)
     /* Set domain id */
     xenaccess->vm_event.domain_id = domain_id;
 
-    /* Enable mem_access */
-    xenaccess->vm_event.ring_page =
+    /* Ring buffer page count */
+    xenaccess->vm_event.ring_page_count = 2;
+
+    xenaccess->vm_event.ring_buffer = xc_monitor_enable_ex(
+        xenaccess->xc_handle,
+        xenaccess->vm_event.domain_id,
+        xenaccess->vm_event.ring_page_count,
+        &xenaccess->vm_event.evtchn_port);
+
+    if (xenaccess->vm_event.ring_buffer == NULL && errno == EOPNOTSUPP)
+    {
+        xenaccess->vm_event.ring_page_count = 1;
+        xenaccess->vm_event.ring_buffer =
             xc_monitor_enable(xenaccess->xc_handle,
                               xenaccess->vm_event.domain_id,
                               &xenaccess->vm_event.evtchn_port);
-    if ( xenaccess->vm_event.ring_page == NULL )
+    }
+
+    if ( xenaccess->vm_event.ring_buffer == NULL )
     {
         switch ( errno ) {
             case EBUSY:
@@ -254,10 +269,10 @@ xenaccess_t *xenaccess_init(xc_interface **xch_r, domid_t domain_id)
     xenaccess->vm_event.port = rc;
 
     /* Initialise ring */
-    SHARED_RING_INIT((vm_event_sring_t *)xenaccess->vm_event.ring_page);
+    SHARED_RING_INIT((vm_event_sring_t *)xenaccess->vm_event.ring_buffer);
     BACK_RING_INIT(&xenaccess->vm_event.back_ring,
-                   (vm_event_sring_t *)xenaccess->vm_event.ring_page,
-                   XC_PAGE_SIZE);
+                   (vm_event_sring_t *)xenaccess->vm_event.ring_buffer,
+                   XC_PAGE_SIZE * xenaccess->vm_event.ring_page_count );
 
     /* Get max_gpfn */
     rc = xc_domain_maximum_gpfn(xenaccess->xc_handle,

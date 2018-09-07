@@ -21,6 +21,7 @@
  */
 
 #include "xc_private.h"
+#include "xenforeignmemory.h"
 
 int xc_vm_event_control(xc_interface *xch, uint32_t domain_id, unsigned int op,
                         unsigned int type, uint32_t *port)
@@ -154,6 +155,54 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int type,
 
     return ring_page;
 }
+
+void *xc_vm_event_enable_ex(xc_interface *xch, uint32_t domain_id, int type,
+                            int order, uint32_t *port)
+{
+    xenforeignmemory_resource_handle *fres = NULL;
+    int saved_errno;
+    void *ring_buffer = NULL;
+
+    if ( !port )
+    {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    /* Pause the domain for ring page setup */
+    if ( xc_domain_pause(xch, domain_id) )
+    {
+        PERROR("Unable to pause domain\n");
+        return NULL;
+    }
+
+    fres = xenforeignmemory_map_resource(xch->fmem, domain_id,
+                                         XENMEM_resource_vm_event, type, 0,
+                                         order, &ring_buffer,
+                                         PROT_READ | PROT_WRITE, 0);
+    if ( !fres )
+    {
+        PERROR("Unable to map vm_event ring pages resource\n");
+        goto out;
+    }
+
+    if ( xc_vm_event_control(xch, domain_id, XEN_VM_EVENT_GET_PORT, type, port) )
+        PERROR("Unable to get vm_event channel port\n");
+
+out:
+    saved_errno = errno;
+    if ( xc_domain_unpause(xch, domain_id) != 0 )
+    {
+        if (fres)
+            saved_errno = errno;
+        PERROR("Unable to unpause domain");
+    }
+
+    free(fres);
+    errno = saved_errno;
+    return ring_buffer;
+}
+
 
 /*
  * Local variables:

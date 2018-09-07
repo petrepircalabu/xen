@@ -2005,6 +2005,8 @@ int xc_get_mem_access(xc_interface *xch, uint32_t domain_id,
  * Caller has to unmap this page when done.
  */
 void *xc_monitor_enable(xc_interface *xch, uint32_t domain_id, uint32_t *port);
+void *xc_monitor_enable_ex(xc_interface *xch, uint32_t domain_id,
+                           int order, uint32_t *port);
 int xc_monitor_disable(xc_interface *xch, uint32_t domain_id);
 int xc_monitor_resume(xc_interface *xch, uint32_t domain_id);
 /*
