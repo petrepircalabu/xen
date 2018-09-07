@@ -286,9 +286,10 @@ struct vm_event_domain
     /* The ring has 64 entries */
     unsigned char foreign_producers;
     unsigned char target_producers;
-    /* shared ring page */
-    void *ring_page;
-    struct page_info *ring_pg_struct;
+    /* shared ring pages */
+    void *ring_buffer;
+    mfn_t *ring_mfn;
+    unsigned int ring_frames_count;
     /* front-end ring */
     vm_event_front_ring_t front_ring;
     /* event channel port (vcpu0 only) */
@@ -301,6 +302,8 @@ struct vm_event_domain
     unsigned int blocked;
     /* The last vcpu woken up */
     unsigned int last_vcpu_wake_up;
+    /* MFN list*/
+    mfn_t frames[0];
 };
 
 struct evtchn_port_ops;

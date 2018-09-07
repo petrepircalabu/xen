@@ -39,45 +39,135 @@
 #define vm_event_ring_lock(_ved)       spin_lock(&(_ved)->ring_lock)
 #define vm_event_ring_unlock(_ved)     spin_unlock(&(_ved)->ring_lock)
 
+#define XEN_VM_EVENT_ALLOC_FROM_DOMHEAP 0xFFFFFFFF
+
+static int vm_event_alloc_frames(struct domain *d, unsigned int nr_frames,
+                                 mfn_t mfn[], void **_va)
+{
+    struct page_info *page;
+    void *va = NULL;
+    int i, rc = 0;
+
+    ASSERT( mfn != NULL );
+
+    for ( i = 0; i < nr_frames; i++ )
+    {
+        page = alloc_domheap_page(d, MEMF_no_refcount);
+        if ( !page )
+        {
+            rc = -ENOMEM;
+            goto fail;
+        }
+
+        if ( !get_page_type(page, PGT_writable_page) )
+        {
+            free_domheap_page(page);
+            rc = -EINVAL;
+            goto fail;
+        }
+
+        mfn[i] = page_to_mfn(page);
+    }
+
+    va = vmap(mfn, nr_frames);
+    if ( !va )
+    {
+        rc = -ENOMEM;
+        goto fail;
+    }
+
+    for( i = 0; i < nr_frames; i++ )
+        clear_page(va + i * PAGE_SIZE);
+
+    (*_va) = va;
+    return 0;
+
+fail:
+    while(i--)
+        put_page_and_type(mfn_to_page(mfn[i]));
+
+    return rc;
+ }
+
+static void vm_event_destroy_frames(unsigned int nr_frames, mfn_t mfn[],
+                                    void **_va)
+{
+    int i;
+    void *va = *_va;
+
+    if ( !va )
+        return;
+
+    ASSERT( mfn != NULL );
+
+    vunmap(va);
+    for ( i = 0; i < nr_frames; i++ )
+        put_page_and_type(mfn_to_page(mfn[i]));
+
+    *_va = NULL;
+}
+
 static int vm_event_enable(
     struct domain *d,
-    struct xen_domctl_vm_event_op *vec,
     struct vm_event_domain **ved,
+    unsigned long param,
+    unsigned int nr_frames,
     int pause_flag,
-    int param,
     xen_event_channel_notification_t notification_fn)
 {
     int rc;
-    unsigned long ring_gfn = d->arch.hvm.params[param];
+
+    if ( unlikely(!nr_frames) )
+        return -EINVAL;
 
     if ( !*ved )
-        *ved = xzalloc(struct vm_event_domain);
+        *ved = _xzalloc(sizeof(struct vm_event_domain) + nr_frames * sizeof(mfn_t),
+                        __alignof__(struct vm_event_domain));
     if ( !*ved )
         return -ENOMEM;
 
     /* Only one helper at a time. If the helper crashed,
      * the ring is in an undefined state and so is the guest.
      */
-    if ( (*ved)->ring_page )
-        return -EBUSY;;
-
-    /* The parameter defaults to zero, and it should be
-     * set to something */
-    if ( ring_gfn == 0 )
-        return -ENOSYS;
+    if ( (*ved)->ring_buffer )
+        return -EBUSY;
 
     vm_event_ring_lock_init(*ved);
     vm_event_ring_lock(*ved);
 
     rc = vm_event_init_domain(d);
-
     if ( rc < 0 )
         goto err;
 
-    rc = prepare_ring_for_helper(d, ring_gfn, &(*ved)->ring_pg_struct,
-                                 &(*ved)->ring_page);
-    if ( rc < 0 )
-        goto err;
+    (*ved)->ring_frames_count = nr_frames;
+    (*ved)->ring_mfn = &(*ved)->frames[0];
+
+    if ( param == XEN_VM_EVENT_ALLOC_FROM_DOMHEAP )
+    {
+        rc = vm_event_alloc_frames(current->domain, (*ved)->ring_frames_count,
+                                   (*ved)->ring_mfn, &(*ved)->ring_buffer);
+        if ( rc < 0 )
+            goto err;
+    }
+    else
+    {
+        /* param points to a specific gfn */
+        unsigned long ring_gfn = d->arch.hvm.params[param];
+        struct page_info *page;
+
+        /* The parameter defaults to zero, and it should be set to something */
+        if ( ring_gfn == 0 )
+        {
+            rc = -ENOSYS;
+            goto err;
+        }
+
+        rc = prepare_ring_for_helper(d, ring_gfn, &page, &(*ved)->ring_buffer);
+        if ( rc < 0 )
+            goto err;
+
+        (*ved)->ring_mfn[0] = page_to_mfn(page);
+    }
 
     /* Set the number of currently blocked vCPUs to 0. */
     (*ved)->blocked = 0;
@@ -88,12 +178,12 @@ static int vm_event_enable(
     if ( rc < 0 )
         goto err;
 
-    (*ved)->xen_port = vec->port = rc;
+    (*ved)->xen_port =  rc;
 
     /* Prepare ring buffer */
     FRONT_RING_INIT(&(*ved)->front_ring,
-                    (vm_event_sring_t *)(*ved)->ring_page,
-                    PAGE_SIZE);
+                    (vm_event_sring_t *)(*ved)->ring_buffer,
+                    (*ved)->ring_frames_count * PAGE_SIZE);
 
     /* Save the pause flag for this particular ring. */
     (*ved)->pause_flag = pause_flag;
@@ -105,11 +195,11 @@ static int vm_event_enable(
     return 0;
 
  err:
-    destroy_ring_for_helper(&(*ved)->ring_page,
-                            (*ved)->ring_pg_struct);
+    vm_event_destroy_frames((*ved)->ring_frames_count, (*ved)->ring_mfn,
+                            (*ved)->ring_buffer);
+    vm_event_cleanup_domain(d);
     vm_event_ring_unlock(*ved);
-    xfree(*ved);
-    *ved = NULL;
+    XFREE(*ved);
 
     return rc;
 }
@@ -221,16 +311,14 @@ static int vm_event_disable(struct domain *d, struct vm_event_domain **ved)
             }
         }
 
-        destroy_ring_for_helper(&(*ved)->ring_page,
-                                (*ved)->ring_pg_struct);
-
+        vm_event_destroy_frames((*ved)->ring_frames_count, (*ved)->ring_mfn,
+                                (*ved)->ring_buffer);
         vm_event_cleanup_domain(d);
 
         vm_event_ring_unlock(*ved);
     }
 
-    xfree(*ved);
-    *ved = NULL;
+    XFREE(*ved);
 
     return 0;
 }
@@ -459,7 +547,7 @@ static int vm_event_grab_slot(struct vm_event_domain *ved, int foreign)
 {
     unsigned int avail_req;
 
-    if ( !ved->ring_page )
+    if ( !ved->ring_buffer )
         return -ENOSYS;
 
     vm_event_ring_lock(ved);
@@ -498,7 +586,7 @@ static int vm_event_wait_slot(struct vm_event_domain *ved)
 
 bool_t vm_event_check_ring(struct vm_event_domain *ved)
 {
-    return (ved && ved->ring_page);
+    return (ved && ved->ring_buffer);
 }
 
 /*
@@ -587,6 +675,46 @@ void vm_event_cleanup(struct domain *d)
 #endif
 }
 
+#ifdef CONFIG_HAS_MEM_PAGING
+static int vm_event_op_paging_is_supported(struct domain *d)
+{
+    struct p2m_domain *p2m = p2m_get_hostp2m(d);
+
+    /* hvm fixme: p2m_is_foreign types need addressing */
+    if ( is_hvm_domain(hardware_domain) )
+        return -EOPNOTSUPP;
+
+    /* Only HAP is supported */
+    if ( !hap_enabled(d) )
+        return -ENODEV;
+
+    /* No paging if iommu is used */
+    if ( unlikely(need_iommu(d)) )
+        return -EMLINK;
+
+    /* Disallow paging in a PoD guest */
+    if ( p2m->pod.entry_count )
+        return -EXDEV;
+
+    return 0;
+}
+#endif /* CONFIG_HAS_MEM_PAGING */
+
+#ifdef CONFIG_HAS_MEM_SHARING
+static int vm_event_op_sharing_is_supported(struct domain *d)
+{
+    /* hvm fixme: p2m_is_foreign types need addressing */
+    if ( is_hvm_domain(hardware_domain) )
+        return -EOPNOTSUPP;
+
+    /* Only HAP is supported */
+    if ( !hap_enabled(d) )
+        return -ENODEV;
+
+    return 0;
+}
+#endif /* CONFIG_HAS_MEM_SHARING */
+
 int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
                     XEN_GUEST_HANDLE_PARAM(void) u_domctl)
 {
@@ -629,33 +757,19 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
         switch( vec->op )
         {
         case XEN_VM_EVENT_ENABLE:
-        {
-            rc = -EOPNOTSUPP;
-            /* hvm fixme: p2m_is_foreign types need addressing */
-            if ( is_hvm_domain(hardware_domain) )
-                break;
-
-            rc = -ENODEV;
-            /* Only HAP is supported */
-            if ( !hap_enabled(d) )
-                break;
-
-            /* No paging if iommu is used */
-            rc = -EMLINK;
-            if ( unlikely(need_iommu(d)) )
-                break;
-
-            rc = -EXDEV;
-            /* Disallow paging in a PoD guest */
-            if ( p2m_pod_entry_count(p2m_get_hostp2m(d)) )
+            rc = vm_event_op_paging_is_supported(d);
+            if ( rc )
                 break;
 
             /* domain_pause() not required here, see XSA-99 */
-            rc = vm_event_enable(d, vec, &d->vm_event_paging, _VPF_mem_paging,
-                                 HVM_PARAM_PAGING_RING_PFN,
+            rc = vm_event_enable(d, &d->vm_event_paging,
+                                 HVM_PARAM_PAGING_RING_PFN, 1,
+                                 _VPF_mem_paging,
                                  mem_paging_notification);
-        }
-        break;
+            if ( !rc )
+                vec->port = d->vm_event_paging->xen_port;
+
+            break;
 
         case XEN_VM_EVENT_DISABLE:
             if ( vm_event_check_ring(d->vm_event_paging) )
@@ -692,9 +806,14 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
             rc = arch_monitor_init_domain(d);
             if ( rc )
                 break;
-            rc = vm_event_enable(d, vec, &d->vm_event_monitor, _VPF_mem_access,
-                                 HVM_PARAM_MONITOR_RING_PFN,
+
+            rc = vm_event_enable(d, &d->vm_event_monitor,
+                                 HVM_PARAM_MONITOR_RING_PFN, 1,
+                                  _VPF_mem_access,
                                  monitor_notification);
+            if ( !rc )
+                vec->port = d->vm_event_monitor->xen_port;
+
             break;
 
         case XEN_VM_EVENT_DISABLE:
@@ -714,6 +833,15 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
                 rc = -ENODEV;
             break;
 
+        case XEN_VM_EVENT_GET_PORT:
+            rc = -ENODEV;
+            if ( vm_event_check_ring(d->vm_event_monitor) )
+            {
+                vec->port = d->vm_event_monitor->xen_port;
+                rc = 0;
+            }
+            break;
+
         default:
             rc = -ENOSYS;
             break;
@@ -729,20 +857,18 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
         switch( vec->op )
         {
         case XEN_VM_EVENT_ENABLE:
-            rc = -EOPNOTSUPP;
-            /* hvm fixme: p2m_is_foreign types need addressing */
-            if ( is_hvm_domain(hardware_domain) )
-                break;
-
-            rc = -ENODEV;
-            /* Only HAP is supported */
-            if ( !hap_enabled(d) )
+            rc = vm_event_op_sharing_is_supported(d);
+            if ( rc )
                 break;
 
             /* domain_pause() not required here, see XSA-99 */
-            rc = vm_event_enable(d, vec, &d->vm_event_share, _VPF_mem_sharing,
-                                 HVM_PARAM_SHARING_RING_PFN,
+            rc = vm_event_enable(d, &d->vm_event_share,
+                                 HVM_PARAM_SHARING_RING_PFN, 1,
+                                 _VPF_mem_sharing,
                                  mem_sharing_notification);
+            if ( !rc )
+                vec->port = d->vm_event_share->xen_port;
+
             break;
 
         case XEN_VM_EVENT_DISABLE:
@@ -774,6 +900,43 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
     }
 
     return rc;
+}
+
+int vm_event_get_ring_frames(struct domain *d, unsigned int id,
+                             unsigned long frame, unsigned int nr_frames,
+                             xen_pfn_t mfn_list[])
+{
+    int rc, i;
+    int pause_flag;
+    struct vm_event_domain **ved;
+    xen_event_channel_notification_t notification_fn;
+
+    switch ( id )
+    {
+    case XEN_VM_EVENT_TYPE_MONITOR:
+        ved = &d->vm_event_monitor;
+        pause_flag = _VPF_mem_access;
+        notification_fn = monitor_notification;
+
+        rc = arch_monitor_init_domain(d);
+        if ( rc )
+            return rc;
+        break;
+
+    default:
+        return -ENOSYS;
+    }
+
+    rc = vm_event_enable(d, ved, XEN_VM_EVENT_ALLOC_FROM_DOMHEAP,
+                         nr_frames, pause_flag,
+                         notification_fn);
+    if ( rc )
+        return rc;
+
+    for ( i = 0; i < nr_frames; i++ )
+        mfn_list[i] = mfn_x((*ved)->ring_mfn[i]);
+
+    return 0;
 }
 
 void vm_event_vcpu_pause(struct vcpu *v)
