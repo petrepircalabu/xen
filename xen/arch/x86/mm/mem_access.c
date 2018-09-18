@@ -30,6 +30,7 @@
 #include <asm/p2m.h>
 #include <asm/altp2m.h>
 #include <asm/hvm/emulate.h>
+#include <asm/hvm/vmx/vmx.h>
 #include <asm/vm_event.h>
 
 #include "mm-locks.h"
@@ -153,6 +154,20 @@ bool p2m_mem_access_check(paddr_t gpa, unsigned long gla,
     p2m_access_t p2ma;
     vm_event_request_t *req;
     int rc;
+    unsigned long idtv_info;
+
+    __vmread(IDT_VECTORING_INFO, &idtv_info);
+
+    if ( idtv_info & INTR_INFO_VALID_MASK )
+        printk("p2m_access_check(), idtv_info: 0x%lx, GPT: %d, gfn: 0x%lx,"
+                       " gpa: 0x%lx, gla_valid: %u, gla: 0x%lx,"
+                       " type: %c%c%c\n",
+//                       idtv_info, !hvm_funcs.exited_by_nested_pagefault(), gfn, gpa, npfec.gla_valid, gla,
+                       idtv_info, 0, gfn_x(gfn), gpa, npfec.gla_valid, gla,
+                       npfec.read_access ? 'r' : '-',
+                       npfec.write_access ? 'w' : '-',
+                       npfec.insn_fetch ? 'x' : '-' );
+
 
     if ( altp2m_active(d) )
         p2m = p2m_get_altp2m(v);
@@ -164,6 +179,13 @@ bool p2m_mem_access_check(paddr_t gpa, unsigned long gla,
      * locked and just did a successful get_entry(). */
     gfn_lock(p2m, gfn, 0);
     mfn = p2m->get_entry(p2m, gfn, &p2mt, &p2ma, 0, NULL, NULL);
+
+    if ( (idtv_info & INTR_INFO_VALID_MASK) && p2ma == p2m_access_rwx )
+    {
+	printk("idtv_info valid, page already rwx\n");
+	gfn_unlock(p2m, gfn, 0);
+        return 1;
+    }
 
     if ( npfec.write_access && p2ma == p2m_access_rx2rw )
     {
@@ -223,7 +245,15 @@ bool p2m_mem_access_check(paddr_t gpa, unsigned long gla,
     req = xzalloc(vm_event_request_t);
     if ( req )
     {
+        unsigned long idtv_info;
+
         *req_ptr = req;
+
+        __vmread(IDT_VECTORING_INFO, &idtv_info);
+        if ( idtv_info & INTR_INFO_VALID_MASK )
+            req->data.regs.x86._pad = 0xcaca;
+	else
+	    req->data.regs.x86._pad = 0;
 
         req->reason = VM_EVENT_REASON_MEM_ACCESS;
         req->u.mem_access.gfn = gfn_x(gfn);
@@ -309,7 +339,10 @@ static int set_mem_access(struct domain *d, struct p2m_domain *p2m,
         p2m_type_t t;
 
         mfn = p2m->get_entry(p2m, gfn, &t, &_a, 0, NULL, NULL);
-        rc = p2m->set_entry(p2m, gfn, mfn, PAGE_ORDER_4K, t, a, -1);
+
+	/* Skip invalid mfns. */
+        if ( !mfn_eq(mfn, INVALID_MFN ) )
+            rc = p2m->set_entry(p2m, gfn, mfn, PAGE_ORDER_4K, t, a, -1);
     }
 
     return rc;

@@ -34,6 +34,7 @@ struct arch_vm_event {
     struct monitor_write_data write_data;
     struct vm_event_regs_x86 gprs;
     bool set_gprs;
+    bool processing;
 };
 
 int vm_event_init_domain(struct domain *d);

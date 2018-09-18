@@ -24,6 +24,7 @@
 #include <xen/domain_page.h>
 #include <xen/hypercall.h>
 #include <xen/perfc.h>
+#include <xen/vm_event.h>
 #include <asm/current.h>
 #include <asm/io.h>
 #include <asm/iocap.h>
@@ -57,6 +58,7 @@
 #include <asm/event.h>
 #include <asm/mce.h>
 #include <asm/monitor.h>
+#include <asm/vm_event.h>
 #include <public/arch-x86/cpuid.h>
 
 static bool_t __initdata opt_force_ept;
@@ -94,6 +96,23 @@ static DEFINE_PER_CPU(struct vmx_pi_blocking_vcpu, vmx_pi_blocking);
 
 uint8_t __read_mostly posted_intr_vector;
 static uint8_t __read_mostly pi_wakeup_vector;
+
+static void check_pending_interrupt(void)
+{
+    unsigned long old_intr_fields;
+    struct vcpu *curr = current;
+
+    __vmread(VM_ENTRY_INTR_INFO, &old_intr_fields);
+
+    if (old_intr_fields & INTR_INFO_VALID_MASK)
+    {
+        printk("old_intr_info: 0x%lx\n", old_intr_fields);
+        dump_execution_state();
+        printk("************* VMCS Area **************\n");
+        vmcs_dump_vcpu(curr);
+        printk("**************************************\n");
+    }
+}
 
 void vmx_pi_per_cpu_init(unsigned int cpu)
 {
@@ -752,11 +771,13 @@ static int vmx_vmcs_restore(struct vcpu *v, struct hvm_hw_cpu *c)
     {
         gdprintk(XENLOG_INFO, "Re-injecting %#"PRIx32", %#"PRIx32"\n",
                  c->pending_event, c->error_code);
+	check_pending_interrupt();
         __vmwrite(VM_ENTRY_INTR_INFO, c->pending_event);
         __vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE, c->error_code);
     }
     else
     {
+	check_pending_interrupt();
         __vmwrite(VM_ENTRY_INTR_INFO, 0);
         __vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE, 0);
     }
@@ -1770,6 +1791,7 @@ static void __vmx_inject_exception(int trap, int type, int error_code)
         intr_fields |= INTR_INFO_DELIVER_CODE_MASK;
     }
 
+    check_pending_interrupt();
     __vmwrite(VM_ENTRY_INTR_INFO, intr_fields);
 
     /* Can't inject exceptions in virtual 8086 mode because they would 
@@ -3523,6 +3545,7 @@ static void vmx_idtv_reinject(unsigned long idtv_info)
                                          idtv_info & INTR_INFO_VECTOR_MASK) )
         {
             /* See SDM 3B 25.7.1.1 and .2 for info about masking resvd bits. */
+	    check_pending_interrupt();
             __vmwrite(VM_ENTRY_INTR_INFO,
                       idtv_info & ~INTR_INFO_RESVD_BITS_MASK);
             if ( idtv_info & INTR_INFO_DELIVER_CODE_MASK )
@@ -4151,6 +4174,10 @@ void vmx_vmexit_handler(struct cpu_user_regs *regs)
 
         __vmread(GUEST_PHYSICAL_ADDRESS, &gpa);
         __vmread(EXIT_QUALIFICATION, &exit_qualification);
+
+	if ( idtv_info & INTR_INFO_VALID_MASK )
+		printk("exit_qualification: 0x%lx\n", exit_qualification);
+
         ept_handle_violation(exit_qualification, gpa);
         break;
     }

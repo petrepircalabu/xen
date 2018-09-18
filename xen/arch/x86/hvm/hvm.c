@@ -536,6 +536,8 @@ void hvm_do_resume(struct vcpu *v)
                                   info.cr2);
             v->arch.monitor.next_interrupt_enabled = false;
         }
+
+        v->arch.vm_event->processing = 0;
     }
 }
 

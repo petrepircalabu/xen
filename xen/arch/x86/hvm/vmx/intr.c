@@ -22,6 +22,7 @@
 #include <xen/errno.h>
 #include <xen/trace.h>
 #include <xen/event.h>
+#include <xen/vm_event.h>
 #include <asm/apicdef.h>
 #include <asm/current.h>
 #include <asm/cpufeature.h>
@@ -35,6 +36,7 @@
 #include <asm/hvm/vpic.h>
 #include <asm/hvm/vlapic.h>
 #include <asm/hvm/nestedhvm.h>
+#include <asm/vm_event.h>
 #include <public/hvm/ioreq.h>
 #include <asm/hvm/trace.h>
 
@@ -238,6 +240,11 @@ void vmx_intr_assist(void)
         vmx_update_cpu_exec_control(v);
         return;
     }
+
+    if ( unlikely(v->arch.vm_event) &&
+         vm_event_check_ring(v->domain->vm_event_monitor) &&
+         v->arch.vm_event->processing )
+        return;
 
     /* Crank the handle on interrupt state. */
     pt_vector = pt_update_irq(v);
