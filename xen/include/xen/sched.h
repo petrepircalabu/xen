@@ -278,6 +278,8 @@ struct vcpu
 #define domain_lock(d) spin_lock_recursive(&(d)->domain_lock)
 #define domain_unlock(d) spin_unlock_recursive(&(d)->domain_lock)
 
+struct vm_event_buffer;
+
 /* VM event */
 struct vm_event_domain
 {
@@ -286,10 +288,8 @@ struct vm_event_domain
     /* The ring has 64 entries */
     unsigned char foreign_producers;
     unsigned char target_producers;
-    /* shared ring pages */
-    void *ring_buffer;
-    mfn_t *ring_mfn;
-    unsigned int ring_frames_count;
+    /* shared ring */
+    struct vm_event_buffer *ring;
     /* front-end ring */
     vm_event_front_ring_t front_ring;
     /* event channel port (vcpu0 only) */
@@ -302,8 +302,6 @@ struct vm_event_domain
     unsigned int blocked;
     /* The last vcpu woken up */
     unsigned int last_vcpu_wake_up;
-    /* MFN list*/
-    mfn_t frames[0];
 };
 
 struct evtchn_port_ops;

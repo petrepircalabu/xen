@@ -41,70 +41,106 @@
 
 #define XEN_VM_EVENT_ALLOC_FROM_DOMHEAP 0xFFFFFFFF
 
-static int vm_event_alloc_frames(struct domain *d, unsigned int nr_frames,
-                                 mfn_t mfn[], void **_va)
+struct vm_event_buffer
 {
+    void *va;
+    unsigned int nr_frames;
+    mfn_t mfn[0];
+};
+
+static int vm_event_alloc_buffer(struct domain *d, unsigned long param,
+                                 unsigned int nr_frames, struct vm_event_buffer **_veb)
+{
+    struct vm_event_buffer *veb;
     struct page_info *page;
-    void *va = NULL;
-    int i, rc = 0;
+    int i = 0, rc;
 
-    ASSERT( mfn != NULL );
-
-    for ( i = 0; i < nr_frames; i++ )
-    {
-        page = alloc_domheap_page(d, MEMF_no_refcount);
-        if ( !page )
-        {
-            rc = -ENOMEM;
-            goto fail;
-        }
-
-        if ( !get_page_type(page, PGT_writable_page) )
-        {
-            free_domheap_page(page);
-            rc = -EINVAL;
-            goto fail;
-        }
-
-        mfn[i] = page_to_mfn(page);
-    }
-
-    va = vmap(mfn, nr_frames);
-    if ( !va )
+    veb = _xzalloc(sizeof(struct vm_event_buffer) + nr_frames * sizeof(mfn_t),
+                   __alignof__(struct vm_event_buffer));
+    if ( unlikely(!veb) )
     {
         rc = -ENOMEM;
-        goto fail;
+        goto err;
     }
 
-    for( i = 0; i < nr_frames; i++ )
-        clear_page(va + i * PAGE_SIZE);
+    veb->nr_frames = nr_frames;
 
-    (*_va) = va;
+    if ( param == XEN_VM_EVENT_ALLOC_FROM_DOMHEAP )
+    {
+        for ( i = 0; i < nr_frames; i++ )
+        {
+            page = alloc_domheap_page(current->domain, MEMF_no_refcount);
+            if ( !page )
+            {
+                rc = -ENOMEM;
+                goto err;
+            }
+
+            if ( !get_page_type(page, PGT_writable_page) )
+            {
+                free_domheap_page(page);
+                rc = -EINVAL;
+                goto err;
+            }
+
+            veb->mfn[i] = page_to_mfn(page);
+        }
+
+        veb->va = vmap(veb->mfn, nr_frames);
+        if ( !veb->va )
+        {
+            rc = -ENOMEM;
+            goto err;
+        }
+
+        for( i = 0; i < nr_frames; i++ )
+            clear_page(veb->va + i * PAGE_SIZE);
+    }
+    else
+    {
+        /* param points to a specific gfn */
+        unsigned long ring_gfn = d->arch.hvm.params[param];
+
+        /* The parameter defaults to zero, and it should be set to something */
+        if ( ring_gfn == 0 )
+        {
+            rc = -ENOSYS;
+            goto err;
+        }
+
+        rc = prepare_ring_for_helper(d, ring_gfn, &page, &veb->va);
+        if ( rc < 0 )
+            goto err;
+
+        veb->mfn[i++] = page_to_mfn(page);
+    }
+
+    *_veb = veb;
     return 0;
 
-fail:
+err:
     while(i--)
-        put_page_and_type(mfn_to_page(mfn[i]));
+        put_page_and_type(mfn_to_page(veb->mfn[i]));
 
+    xfree(veb);
     return rc;
- }
+}
 
-static void vm_event_destroy_frames(unsigned int nr_frames, mfn_t mfn[],
-                                    void **_va)
+static void vm_event_free_buffer(struct vm_event_buffer **_veb)
 {
+    struct vm_event_buffer *veb = *_veb;
     int i;
-    void *va = *_va;
 
-    if ( !va )
+    if ( !veb )
         return;
 
-    ASSERT( mfn != NULL );
-
-    vunmap(va);
-    for ( i = 0; i < nr_frames; i++ )
-        put_page_and_type(mfn_to_page(mfn[i]));
-
-    *_va = NULL;
+    if ( veb->va )
+    {
+        vunmap(veb->va);
+        for ( i = 0; i < veb->nr_frames; i++ )
+            put_page_and_type(mfn_to_page(veb->mfn[i]));
+    }
+    XFREE(*_veb);
 }
 
 static int vm_event_enable(
@@ -121,15 +157,14 @@ static int vm_event_enable(
         return -EINVAL;
 
     if ( !*ved )
-        *ved = _xzalloc(sizeof(struct vm_event_domain) + nr_frames * sizeof(mfn_t),
-                        __alignof__(struct vm_event_domain));
+        *ved = xzalloc(struct vm_event_domain);
     if ( !*ved )
         return -ENOMEM;
 
     /* Only one helper at a time. If the helper crashed,
      * the ring is in an undefined state and so is the guest.
      */
-    if ( (*ved)->ring_buffer )
+    if ( (*ved)->ring )
         return -EBUSY;
 
     vm_event_ring_lock_init(*ved);
@@ -139,35 +174,9 @@ static int vm_event_enable(
     if ( rc < 0 )
         goto err;
 
-    (*ved)->ring_frames_count = nr_frames;
-    (*ved)->ring_mfn = &(*ved)->frames[0];
-
-    if ( param == XEN_VM_EVENT_ALLOC_FROM_DOMHEAP )
-    {
-        rc = vm_event_alloc_frames(current->domain, (*ved)->ring_frames_count,
-                                   (*ved)->ring_mfn, &(*ved)->ring_buffer);
-        if ( rc < 0 )
-            goto err;
-    }
-    else
-    {
-        /* param points to a specific gfn */
-        unsigned long ring_gfn = d->arch.hvm.params[param];
-        struct page_info *page;
-
-        /* The parameter defaults to zero, and it should be set to something */
-        if ( ring_gfn == 0 )
-        {
-            rc = -ENOSYS;
-            goto err;
-        }
-
-        rc = prepare_ring_for_helper(d, ring_gfn, &page, &(*ved)->ring_buffer);
-        if ( rc < 0 )
-            goto err;
-
-        (*ved)->ring_mfn[0] = page_to_mfn(page);
-    }
+    rc = vm_event_alloc_buffer(d, param, nr_frames, &(*ved)->ring);
+    if ( rc < 0 )
+        goto err;
 
     /* Set the number of currently blocked vCPUs to 0. */
     (*ved)->blocked = 0;
@@ -182,8 +191,8 @@ static int vm_event_enable(
 
     /* Prepare ring buffer */
     FRONT_RING_INIT(&(*ved)->front_ring,
-                    (vm_event_sring_t *)(*ved)->ring_buffer,
-                    (*ved)->ring_frames_count * PAGE_SIZE);
+                    (vm_event_sring_t *)(*ved)->ring->va,
+                    (*ved)->ring->nr_frames * PAGE_SIZE);
 
     /* Save the pause flag for this particular ring. */
     (*ved)->pause_flag = pause_flag;
@@ -195,8 +204,7 @@ static int vm_event_enable(
     return 0;
 
  err:
-    vm_event_destroy_frames((*ved)->ring_frames_count, (*ved)->ring_mfn,
-                            (*ved)->ring_buffer);
+    vm_event_free_buffer(&(*ved)->ring);
     vm_event_cleanup_domain(d);
     vm_event_ring_unlock(*ved);
     XFREE(*ved);
@@ -311,8 +319,7 @@ static int vm_event_disable(struct domain *d, struct vm_event_domain **ved)
             }
         }
 
-        vm_event_destroy_frames((*ved)->ring_frames_count, (*ved)->ring_mfn,
-                                (*ved)->ring_buffer);
+        vm_event_free_buffer(&(*ved)->ring);
         vm_event_cleanup_domain(d);
 
         vm_event_ring_unlock(*ved);
@@ -547,7 +554,7 @@ static int vm_event_grab_slot(struct vm_event_domain *ved, int foreign)
 {
     unsigned int avail_req;
 
-    if ( !ved->ring_buffer )
+    if ( !vm_event_check_ring(ved) )
         return -ENOSYS;
 
     vm_event_ring_lock(ved);
@@ -586,7 +593,7 @@ static int vm_event_wait_slot(struct vm_event_domain *ved)
 
 bool_t vm_event_check_ring(struct vm_event_domain *ved)
 {
-    return (ved && ved->ring_buffer);
+    return (ved && ved->ring);
 }
 
 /*
@@ -934,7 +941,7 @@ int vm_event_get_ring_frames(struct domain *d, unsigned int id,
         return rc;
 
     for ( i = 0; i < nr_frames; i++ )
-        mfn_list[i] = mfn_x((*ved)->ring_mfn[i]);
+        mfn_list[i] = mfn_x((*ved)->ring->mfn[i]);
 
     return 0;
 }
