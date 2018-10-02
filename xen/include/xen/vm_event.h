@@ -30,7 +30,10 @@
 void vm_event_cleanup(struct domain *d);
 
 /* Returns whether a ring has been set up */
-bool_t vm_event_check_ring(struct vm_event_domain *ved);
+bool vm_event_check_ring(struct vm_event_domain *ved);
+
+/* Returns whether a sync channel has been set up */
+bool vm_event_check_sync_channel(struct vm_event_domain *ved);
 
 /* Returns 0 on success, -ENOSYS if there is no ring, -EBUSY if there is no
  * available space and the caller is a foreign domain. If the guest itself
@@ -46,17 +49,19 @@ bool_t vm_event_check_ring(struct vm_event_domain *ved);
  * succeed.
  */
 int __vm_event_claim_slot(struct domain *d, struct vm_event_domain *ved,
-                          bool_t allow_sleep);
+                          bool allow_sleep, bool sync);
 static inline int vm_event_claim_slot(struct domain *d,
-                                      struct vm_event_domain *ved)
+                                      struct vm_event_domain *ved,
+                                      bool sync)
 {
-    return __vm_event_claim_slot(d, ved, 1);
+    return __vm_event_claim_slot(d, ved, true, sync);
 }
 
 static inline int vm_event_claim_slot_nosleep(struct domain *d,
-                                              struct vm_event_domain *ved)
+                                              struct vm_event_domain *ved,
+                                              bool sync)
 {
-    return __vm_event_claim_slot(d, ved, 0);
+    return __vm_event_claim_slot(d, ved, false, sync);
 }
 
 void vm_event_cancel_slot(struct domain *d, struct vm_event_domain *ved);
@@ -64,8 +69,8 @@ void vm_event_cancel_slot(struct domain *d, struct vm_event_domain *ved);
 void vm_event_put_request(struct domain *d, struct vm_event_domain *ved,
                           vm_event_request_t *req);
 
-int vm_event_get_response(struct domain *d, struct vm_event_domain *ved,
-                          vm_event_response_t *rsp);
+/*int vm_event_get_response(struct domain *d, struct vm_event_domain *ved,
+                          vm_event_response_t *rsp);*/
 
 void vm_event_resume(struct domain *d, struct vm_event_domain *ved);
 
@@ -83,6 +88,9 @@ void vm_event_monitor_next_interrupt(struct vcpu *v);
 int vm_event_get_ring_frames(struct domain *d, unsigned int id,
                              unsigned long frame, unsigned int nr_frames,
                              xen_pfn_t mfn_list[]);
+int vm_event_get_channel_frames(struct domain *d, unsigned int id,
+                                unsigned long frame, unsigned int nr_frames,
+                                xen_pfn_t mfn_list[]);
 
 #endif /* __VM_EVENT_H__ */
 

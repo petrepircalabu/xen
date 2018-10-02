@@ -292,8 +292,6 @@ struct vm_event_domain
     struct vm_event_buffer *ring;
     /* front-end ring */
     vm_event_front_ring_t front_ring;
-    /* event channel port (vcpu0 only) */
-    int xen_port;
     /* vm_event bit for vcpu->pause_flags */
     int pause_flag;
     /* list of vcpus waiting for room in the ring */
@@ -302,6 +300,10 @@ struct vm_event_domain
     unsigned int blocked;
     /* The last vcpu woken up */
     unsigned int last_vcpu_wake_up;
+    /* Per VCPU slotted channels buffer for sync events*/
+    struct vm_event_buffer *channels;
+    /* event channel ports */
+    int xen_ports[10];
 };
 
 struct evtchn_port_ops;

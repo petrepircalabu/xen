@@ -428,7 +428,7 @@ int xc_ffs64(uint64_t x);
  * vm_event operations. Internal use only.
  */
 int xc_vm_event_control(xc_interface *xch, uint32_t domain_id, unsigned int op,
-                        unsigned int mode);
+                        unsigned int type);
 /*
  * Enables vm_event and returns the mapped ring page indicated by type.
  * type can be XEN_VM_EVENT_TYPE_(PAGING/MONITOR/SHARING)

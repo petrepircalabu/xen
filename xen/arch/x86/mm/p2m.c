@@ -1480,7 +1480,7 @@ void p2m_mem_paging_drop_page(struct domain *d, unsigned long gfn,
      * correctness of the guest execution at this point.  If this is the only
      * page that happens to be paged-out, we'll be okay..  but it's likely the
      * guest will crash shortly anyways. */
-    int rc = vm_event_claim_slot(d, d->vm_event_paging);
+    int rc = vm_event_claim_slot(d, d->vm_event_paging, false);
     if ( rc < 0 )
         return;
 
@@ -1530,9 +1530,10 @@ void p2m_mem_paging_populate(struct domain *d, unsigned long gfn_l)
     gfn_t gfn = _gfn(gfn_l);
     mfn_t mfn;
     struct p2m_domain *p2m = p2m_get_hostp2m(d);
+    bool sync = p2m_is_paging(p2mt) && v->domain == d;
 
     /* We're paging. There should be a ring */
-    int rc = vm_event_claim_slot(d, d->vm_event_paging);
+    int rc = vm_event_claim_slot(d, d->vm_event_paging, sync);
     if ( rc == -ENOSYS )
     {
         gdprintk(XENLOG_ERR, "Domain %hu paging gfn %lx yet no ring "
@@ -1563,7 +1564,7 @@ void p2m_mem_paging_populate(struct domain *d, unsigned long gfn_l)
         goto out_cancel;
 
     /* Pause domain if request came from guest and gfn has paging type */
-    if ( p2m_is_paging(p2mt) && v->domain == d )
+    if ( sync )
     {
         vm_event_vcpu_pause(v);
         req.flags |= VM_EVENT_FLAG_VCPU_PAUSED;

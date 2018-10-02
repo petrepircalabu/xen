@@ -546,7 +546,7 @@ static int audit(void)
 }
 
 int mem_sharing_notify_enomem(struct domain *d, unsigned long gfn,
-                                bool_t allow_sleep) 
+                                bool_t allow_sleep)
 {
     struct vcpu *v = current;
     int rc;
@@ -556,12 +556,13 @@ int mem_sharing_notify_enomem(struct domain *d, unsigned long gfn,
         .u.mem_sharing.gfn = gfn,
         .u.mem_sharing.p2mt = p2m_ram_shared
     };
+    bool sync = v->domain == d;
 
-    if ( (rc = __vm_event_claim_slot(d, 
-                        d->vm_event_share, allow_sleep)) < 0 )
+    if ( (rc = __vm_event_claim_slot(d,
+                        d->vm_event_share, allow_sleep, sync)) < 0 )
         return rc;
 
-    if ( v->domain == d )
+    if ( sync )
     {
         req.flags = VM_EVENT_FLAG_VCPU_PAUSED;
         vm_event_vcpu_pause(v);

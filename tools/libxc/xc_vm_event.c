@@ -160,7 +160,7 @@ void *xc_vm_event_enable_ex(xc_interface *xch, uint32_t domain_id, int type,
     }
 
     fres = xenforeignmemory_map_resource(xch->fmem, domain_id,
-                                         XENMEM_resource_vm_event, type, 0,
+                                         XENMEM_resource_vm_event_ring, type, 0,
                                          order, &ring_buffer,
                                          PROT_READ | PROT_WRITE, 0);
     if ( !fres )
