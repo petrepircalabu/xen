@@ -412,7 +412,7 @@ int xc_ffs64(uint64_t x);
  * vm_event operations. Internal use only.
  */
 int xc_vm_event_control(xc_interface *xch, uint32_t domain_id, unsigned int op,
-                        unsigned int mode, uint32_t *port);
+                        unsigned int mode);
 /*
  * Enables vm_event and returns the mapped ring page indicated by param.
  * param can be HVM_PARAM_PAGING/ACCESS/SHARING_RING_PFN

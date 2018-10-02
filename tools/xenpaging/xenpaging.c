@@ -337,40 +337,11 @@ static struct xenpaging *xenpaging_init(int argc, char *argv[])
         goto err;
     }
 
-    /* Map the ring page */
-    xc_get_hvm_param(xch, paging->vm_event.domain_id, 
-                        HVM_PARAM_PAGING_RING_PFN, &ring_pfn);
-    mmap_pfn = ring_pfn;
-    paging->vm_event.ring_page = 
-        xc_map_foreign_pages(xch, paging->vm_event.domain_id,
-                             PROT_READ | PROT_WRITE, &mmap_pfn, 1);
-    if ( !paging->vm_event.ring_page )
-    {
-        /* Map failed, populate ring page */
-        rc = xc_domain_populate_physmap_exact(paging->xc_handle, 
-                                              paging->vm_event.domain_id,
-                                              1, 0, 0, &ring_pfn);
-        if ( rc != 0 )
-        {
-            PERROR("Failed to populate ring gfn\n");
-            goto err;
-        }
-
-        paging->vm_event.ring_page = 
-            xc_map_foreign_pages(xch, paging->vm_event.domain_id,
-                                 PROT_READ | PROT_WRITE,
-                                 &mmap_pfn, 1);
-        if ( !paging->vm_event.ring_page )
-        {
-            PERROR("Could not map the ring page\n");
-            goto err;
-        }
-    }
-    
     /* Initialise Xen */
-    rc = xc_mem_paging_enable(xch, paging->vm_event.domain_id,
-                             &paging->vm_event.evtchn_port);
-    if ( rc != 0 )
+    paging->vm_event.ring_page =
+            xc_mem_paging_enable(xch, paging->vm_event.domain_id,
+                                 &paging->vm_event.evtchn_port);
+    if ( paging->vm_event.ring_page == NULL )
     {
         switch ( errno ) {
             case EBUSY:
@@ -417,11 +388,6 @@ static struct xenpaging *xenpaging_init(int argc, char *argv[])
     BACK_RING_INIT(&paging->vm_event.back_ring,
                    (vm_event_sring_t *)paging->vm_event.ring_page,
                    PAGE_SIZE);
-
-    /* Now that the ring is set, remove it from the guest's physmap */
-    if ( xc_domain_decrease_reservation_exact(xch, 
-                    paging->vm_event.domain_id, 1, 0, &ring_pfn) )
-        PERROR("Failed to remove ring from guest physmap");
 
     /* Get max_pages from guest if not provided via cmdline */
     if ( !paging->max_pages )

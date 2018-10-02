@@ -41,31 +41,6 @@ int xc_memshr_control(xc_interface *xch,
     return do_domctl(xch, &domctl);
 }
 
-int xc_memshr_ring_enable(xc_interface *xch, 
-                          uint32_t domid,
-                          uint32_t *port)
-{
-    if ( !port )
-    {
-        errno = EINVAL;
-        return -1;
-    }
-
-    return xc_vm_event_control(xch, domid,
-                               XEN_VM_EVENT_ENABLE,
-                               XEN_DOMCTL_VM_EVENT_OP_SHARING,
-                               port);
-}
-
-int xc_memshr_ring_disable(xc_interface *xch, 
-                           uint32_t domid)
-{
-    return xc_vm_event_control(xch, domid,
-                               XEN_VM_EVENT_DISABLE,
-                               XEN_DOMCTL_VM_EVENT_OP_SHARING,
-                               NULL);
-}
-
 static int xc_memshr_memop(xc_interface *xch, uint32_t domid,
                             xen_mem_sharing_op_t *mso)
 {
@@ -198,15 +173,6 @@ int xc_memshr_range_share(xc_interface *xch,
     mso.u.range.last_gfn = last_gfn;
 
     return xc_memshr_memop(xch, source_domain, &mso);
-}
-
-int xc_memshr_domain_resume(xc_interface *xch,
-                            uint32_t domid)
-{
-    return xc_vm_event_control(xch, domid,
-                               XEN_VM_EVENT_RESUME,
-                               XEN_DOMCTL_VM_EVENT_OP_SHARING,
-                               NULL);
 }
 
 int xc_memshr_debug_gfn(xc_interface *xch,

@@ -24,24 +24,43 @@
 
 void *xc_monitor_enable(xc_interface *xch, uint32_t domain_id, uint32_t *port)
 {
-    return xc_vm_event_enable(xch, domain_id, HVM_PARAM_MONITOR_RING_PFN,
-                              port);
+    void *buffer;
+    int saved_errno;
+
+    /* Pause the domain for ring page setup */
+    if ( xc_domain_pause(xch, domain_id) )
+    {
+        PERROR("Unable to pause domain\n");
+        return NULL;
+    }
+
+    buffer = xc_vm_event_enable(xch, domain_id,
+                                HVM_PARAM_MONITOR_RING_PFN,
+                                port);
+    saved_errno = errno;
+    if ( xc_domain_unpause(xch, domain_id) )
+    {
+        if ( buffer )
+            saved_errno = errno;
+        PERROR("Unable to unpause domain");
+    }
+
+    errno = saved_errno;
+    return buffer;
 }
 
 int xc_monitor_disable(xc_interface *xch, uint32_t domain_id)
 {
     return xc_vm_event_control(xch, domain_id,
                                XEN_VM_EVENT_DISABLE,
-                               XEN_DOMCTL_VM_EVENT_OP_MONITOR,
-                               NULL);
+                               XEN_DOMCTL_VM_EVENT_OP_MONITOR);
 }
 
 int xc_monitor_resume(xc_interface *xch, uint32_t domain_id)
 {
     return xc_vm_event_control(xch, domain_id,
                                XEN_VM_EVENT_RESUME,
-                               XEN_DOMCTL_VM_EVENT_OP_MONITOR,
-                               NULL);
+                               XEN_DOMCTL_VM_EVENT_OP_MONITOR);
 }
 
 int xc_monitor_get_capabilities(xc_interface *xch, uint32_t domain_id,
