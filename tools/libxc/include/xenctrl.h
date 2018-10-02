@@ -2087,53 +2087,6 @@ int xc_memshr_control(xc_interface *xch,
                       uint32_t domid,
                       int enable);
 
-/* Create a communication ring in which the hypervisor will place ENOMEM
- * notifications.
- *
- * ENOMEM happens when unsharing pages: a Copy-on-Write duplicate needs to be
- * allocated, and thus the out-of-memory error occurr.
- *
- * For complete examples on how to plumb a notification ring, look into
- * xenpaging or xen-access.
- *
- * On receipt of a notification, the helper should ensure there is memory
- * available to the domain before retrying.
- *
- * If a domain encounters an ENOMEM condition when sharing and this ring
- * has not been set up, the hypervisor will crash the domain.
- *
- * Fails with:
- *  EINVAL if port is NULL
- *  EINVAL if the sharing ring has already been enabled
- *  ENOSYS if no guest gfn has been specified to host the ring via an hvm param
- *  EINVAL if the gfn for the ring has not been populated
- *  ENOENT if the gfn for the ring is paged out, or cannot be unshared
- *  EINVAL if the gfn for the ring cannot be written to
- *  EINVAL if the domain is dying
- *  ENOSPC if an event channel cannot be allocated for the ring
- *  ENOMEM if memory cannot be allocated for internal data structures
- *  EINVAL or EACCESS if the request is denied by the security policy
- */
-
-int xc_memshr_ring_enable(xc_interface *xch, 
-                          uint32_t domid,
-                          uint32_t *port);
-/* Disable the ring for ENOMEM communication.
- * May fail with EINVAL if the ring was not enabled in the first place.
- */
-int xc_memshr_ring_disable(xc_interface *xch, 
-                           uint32_t domid);
-
-/*
- * Calls below return EINVAL if sharing has not been enabled for the domain
- * Calls below return EINVAL if the domain is dying
- */
-/* Once a reponse to an ENOMEM notification is prepared, the tool can
- * notify the hypervisor to re-schedule the faulting vcpu of the domain with an
- * event channel kick and/or this call. */
-int xc_memshr_domain_resume(xc_interface *xch,
-                            uint32_t domid);
-
 /* Select a page for sharing. 
  *
  * A 64 bit opaque handle will be stored in handle.  The hypervisor ensures
