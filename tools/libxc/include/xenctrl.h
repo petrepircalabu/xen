@@ -1959,7 +1959,7 @@ int xc_altp2m_change_gfn(xc_interface *handle, uint32_t domid,
  * Hardware-Assisted Paging (i.e. Intel EPT, AMD NPT). Moreover, AMD NPT
  * support is considered experimental.
  */
-int xc_mem_paging_enable(xc_interface *xch, uint32_t domain_id, uint32_t *port);
+void *xc_mem_paging_enable(xc_interface *xch, uint32_t domain_id, uint32_t *port);
 int xc_mem_paging_disable(xc_interface *xch, uint32_t domain_id);
 int xc_mem_paging_resume(xc_interface *xch, uint32_t domain_id);
 int xc_mem_paging_nominate(xc_interface *xch, uint32_t domain_id,

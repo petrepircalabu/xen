@@ -37,35 +37,26 @@ static int xc_mem_paging_memop(xc_interface *xch, uint32_t domain_id,
     return do_memory_op(xch, XENMEM_paging_op, &mpo, sizeof(mpo));
 }
 
-int xc_mem_paging_enable(xc_interface *xch, uint32_t domain_id,
-                         uint32_t *port)
+void *xc_mem_paging_enable(xc_interface *xch, uint32_t domain_id,
+                           uint32_t *port)
 {
-    if ( !port )
-    {
-        errno = EINVAL;
-        return -1;
-    }
-
-    return xc_vm_event_control(xch, domain_id,
-                               XEN_VM_EVENT_ENABLE,
-                               XEN_DOMCTL_VM_EVENT_OP_PAGING,
-                               port);
+    return xc_vm_event_enable(xch, domain_id,
+                              XEN_DOMCTL_VM_EVENT_OP_PAGING,
+                              port);
 }
 
 int xc_mem_paging_disable(xc_interface *xch, uint32_t domain_id)
 {
     return xc_vm_event_control(xch, domain_id,
                                XEN_VM_EVENT_DISABLE,
-                               XEN_DOMCTL_VM_EVENT_OP_PAGING,
-                               NULL);
+                               XEN_DOMCTL_VM_EVENT_OP_PAGING);
 }
 
 int xc_mem_paging_resume(xc_interface *xch, uint32_t domain_id)
 {
     return xc_vm_event_control(xch, domain_id,
                                XEN_VM_EVENT_RESUME,
-                               XEN_DOMCTL_VM_EVENT_OP_PAGING,
-                               NULL);
+                               XEN_DOMCTL_VM_EVENT_OP_PAGING);
 }
 
 int xc_mem_paging_nominate(xc_interface *xch, uint32_t domain_id, uint64_t gfn)

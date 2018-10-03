@@ -23,20 +23,16 @@
 #include "xc_private.h"
 
 int xc_vm_event_control(xc_interface *xch, uint32_t domain_id, unsigned int op,
-                        unsigned int mode, uint32_t *port)
+                        unsigned int mode)
 {
     DECLARE_DOMCTL;
-    int rc;
 
     domctl.cmd = XEN_DOMCTL_vm_event_op;
     domctl.domain = domain_id;
     domctl.u.vm_event_op.op = op;
     domctl.u.vm_event_op.mode = mode;
 
-    rc = do_domctl(xch, &domctl);
-    if ( !rc && port )
-        *port = domctl.u.vm_event_op.port;
-    return rc;
+    return do_domctl(xch, &domctl);
 }
 
 void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
@@ -46,7 +42,8 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
     uint64_t pfn;
     xen_pfn_t ring_pfn, mmap_pfn;
     unsigned int op, mode;
-    int rc1, rc2, saved_errno;
+    int rc;
+    DECLARE_DOMCTL;
 
     if ( !port )
     {
@@ -54,17 +51,9 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
         return NULL;
     }
 
-    /* Pause the domain for ring page setup */
-    rc1 = xc_domain_pause(xch, domain_id);
-    if ( rc1 != 0 )
-    {
-        PERROR("Unable to pause domain\n");
-        return NULL;
-    }
-
     /* Get the pfn of the ring page */
-    rc1 = xc_hvm_param_get(xch, domain_id, param, &pfn);
-    if ( rc1 != 0 )
+    rc = xc_hvm_param_get(xch, domain_id, param, &pfn);
+    if ( rc != 0 )
     {
         PERROR("Failed to get pfn of ring page\n");
         goto out;
@@ -72,13 +61,13 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
 
     ring_pfn = pfn;
     mmap_pfn = pfn;
-    rc1 = xc_get_pfn_type_batch(xch, domain_id, 1, &mmap_pfn);
-    if ( rc1 || mmap_pfn & XEN_DOMCTL_PFINFO_XTAB )
+    rc = xc_get_pfn_type_batch(xch, domain_id, 1, &mmap_pfn);
+    if ( rc || mmap_pfn & XEN_DOMCTL_PFINFO_XTAB )
     {
         /* Page not in the physmap, try to populate it */
-        rc1 = xc_domain_populate_physmap_exact(xch, domain_id, 1, 0, 0,
+        rc = xc_domain_populate_physmap_exact(xch, domain_id, 1, 0, 0,
                                               &ring_pfn);
-        if ( rc1 != 0 )
+        if ( rc != 0 )
         {
             PERROR("Failed to populate ring pfn\n");
             goto out;
@@ -87,7 +76,7 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
 
     mmap_pfn = ring_pfn;
     ring_page = xc_map_foreign_pages(xch, domain_id, PROT_READ | PROT_WRITE,
-                                         &mmap_pfn, 1);
+                                     &mmap_pfn, 1);
     if ( !ring_page )
     {
         PERROR("Could not map the ring page\n");
@@ -117,40 +106,35 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int param,
      */
     default:
         errno = EINVAL;
-        rc1 = -1;
+        rc = -1;
         goto out;
     }
 
-    rc1 = xc_vm_event_control(xch, domain_id, op, mode, port);
-    if ( rc1 != 0 )
+    domctl.cmd = XEN_DOMCTL_vm_event_op;
+    domctl.domain = domain_id;
+    domctl.u.vm_event_op.op = op;
+    domctl.u.vm_event_op.mode = mode;
+
+    rc = do_domctl(xch, &domctl);
+    if ( rc != 0 )
     {
         PERROR("Failed to enable vm_event\n");
         goto out;
     }
 
+    *port = domctl.u.vm_event_op.port;
+
     /* Remove the ring_pfn from the guest's physmap */
-    rc1 = xc_domain_decrease_reservation_exact(xch, domain_id, 1, 0, &ring_pfn);
-    if ( rc1 != 0 )
+    rc = xc_domain_decrease_reservation_exact(xch, domain_id, 1, 0, &ring_pfn);
+    if ( rc != 0 )
         PERROR("Failed to remove ring page from guest physmap");
 
  out:
-    saved_errno = errno;
-
-    rc2 = xc_domain_unpause(xch, domain_id);
-    if ( rc1 != 0 || rc2 != 0 )
+    if ( rc != 0 )
     {
-        if ( rc2 != 0 )
-        {
-            if ( rc1 == 0 )
-                saved_errno = errno;
-            PERROR("Unable to unpause domain");
-        }
-
         if ( ring_page )
             xenforeignmemory_unmap(xch->fmem, ring_page, 1);
         ring_page = NULL;
-
-        errno = saved_errno;
     }
 
     return ring_page;
