@@ -28,6 +28,7 @@
 #include <asm/p2m.h>
 #include <asm/monitor.h>
 #include <asm/vm_event.h>
+#include <xen/guest_access.h>
 #include <xsm/xsm.h>
 
 /* for public/io/ring.h macros */
@@ -819,8 +820,6 @@ void vm_event_cleanup(struct domain *d)
 #ifdef CONFIG_HAS_MEM_PAGING
 static int vm_event_op_paging_is_supported(struct domain *d)
 {
-    struct p2m_domain *p2m = p2m_get_hostp2m(d);
-
     /* hvm fixme: p2m_is_foreign types need addressing */
     if ( is_hvm_domain(hardware_domain) )
         return -EOPNOTSUPP;
@@ -834,7 +833,7 @@ static int vm_event_op_paging_is_supported(struct domain *d)
         return -EMLINK;
 
     /* Disallow paging in a PoD guest */
-    if ( p2m->pod.entry_count )
+    if ( p2m_pod_entry_count(p2m_get_hostp2m(d)) )
         return -EXDEV;
 
     return 0;
@@ -857,7 +856,7 @@ static int vm_event_op_sharing_is_supported(struct domain *d)
 #endif /* CONFIG_HAS_MEM_SHARING */
 
 int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
-                    XEN_GUEST_HANDLE_PARAM(void) u_domctl)
+                    XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
 {
     int rc;
 
@@ -974,13 +973,33 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
                 rc = -ENODEV;
             break;
 
-        case XEN_VM_EVENT_GET_PORT:
-            rc = -ENODEV;
-            if ( vm_event_check_ring(d->vm_event_monitor) )
+        case XEN_VM_EVENT_GET_PORTS:
+            if ( !vm_event_check_sync_channel(d->vm_event_monitor) )
             {
-                vec->u.enable.port = d->vm_event_monitor->xen_ports[d->max_vcpus];
-                rc = 0;
+                gdprintk(XENLOG_ERR, "The XEN_VM_EVENT_GET_PORTS domctl "
+                         "is not supported if the vm event sync channels "
+                         "are not enabled\n");
+                rc = -ENODEV;
+                break;
             }
+
+            if ( guest_handle_is_null(vec->u.get_ports.sync) )
+            {
+                rc = -EINVAL;
+                break;
+            }
+
+            if ( copy_to_guest(vec->u.get_ports.sync,
+                               d->vm_event_monitor->xen_ports,
+                               d->max_vcpus) != 0 )
+            {
+                rc = -EFAULT;
+                break;
+            }
+
+            vec->u.get_ports.async = d->vm_event_monitor->xen_ports[d->max_vcpus];
+
+            rc = 0;
             break;
 
         default:

@@ -820,7 +820,7 @@ struct xen_domctl_gdbsx_domstatus {
 #define XEN_VM_EVENT_ENABLE               0
 #define XEN_VM_EVENT_DISABLE              1
 #define XEN_VM_EVENT_RESUME               2
-#define XEN_VM_EVENT_GET_PORT             3
+#define XEN_VM_EVENT_GET_PORTS            3
 
 /*
  * Use for teardown/setup of helper<->hypervisor interface for paging,
@@ -839,10 +839,13 @@ struct xen_domctl_vm_event_op {
             uint32_t    port;
         } enable;
         struct {
-            /* OUT: remote ports count for vm_event event channel */
-            uint32_t    nr_ports;
-            /* OUT: remote ports for event vm_event channel */
-            XEN_GUEST_HANDLE_64(uint32) ports;
+            /* OUT: remote port for the async event channel ring */
+            uint32_t    async;
+            /*
+             * OUT: remote ports for the sync event vm_event channels
+             * The number for ports will be equal with the vcpu count.
+             */
+            XEN_GUEST_HANDLE_64(uint32) sync;
         } get_ports;
     } u;
 };

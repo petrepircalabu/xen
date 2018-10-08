@@ -303,7 +303,7 @@ struct vm_event_domain
     /* Per VCPU slotted channels buffer for sync events*/
     struct vm_event_buffer *channels;
     /* event channel ports */
-    int xen_ports[10];
+    uint32_t xen_ports[10];
 };
 
 struct evtchn_port_ops;

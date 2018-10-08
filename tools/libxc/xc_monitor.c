@@ -48,26 +48,27 @@ void *xc_monitor_enable(xc_interface *xch, uint32_t domain_id, uint32_t *port)
     errno = saved_errno;
     return buffer;
 }
-
+/*
 void *xc_monitor_enable_ex(xc_interface *xch, uint32_t domain_id, int order,
                            uint32_t *port)
 {
     return xc_vm_event_enable_ex(xch, domain_id, XEN_VM_EVENT_TYPE_MONITOR,
                                  order, port);
 }
+*/
 
 int xc_monitor_disable(xc_interface *xch, uint32_t domain_id)
 {
     return xc_vm_event_control(xch, domain_id,
                                XEN_VM_EVENT_DISABLE,
-                               XEN_DOMCTL_VM_EVENT_OP_MONITOR);
+                               XEN_VM_EVENT_TYPE_MONITOR);
 }
 
 int xc_monitor_resume(xc_interface *xch, uint32_t domain_id)
 {
     return xc_vm_event_control(xch, domain_id,
                                XEN_VM_EVENT_RESUME,
-                               XEN_DOMCTL_VM_EVENT_OP_MONITOR);
+                               XEN_VM_EVENT_TYPE_MONITOR);
 }
 
 int xc_monitor_get_capabilities(xc_interface *xch, uint32_t domain_id,

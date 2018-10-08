@@ -4448,21 +4448,9 @@ int arch_acquire_resource(struct domain *d, unsigned int type,
     }
 #endif
 
-    case XENMEM_resource_vm_event_ring:
+    case XENMEM_resource_vm_event:
     {
         rc = vm_event_get_ring_frames(d, id, frame, nr_frames, mfn_list);
-        if ( rc )
-            break;
-        /*
-         * The frames will have been assigned to the calling domain.
-         */
-        *flags |= XENMEM_rsrc_acq_caller_owned;
-        break;
-    }
-
-    case XENMEM_resource_vm_event_channel:
-    {
-        rc = vm_event_get_channel_frames(d, id, frame, nr_frames, mfn_list);
         if ( rc )
             break;
         /*

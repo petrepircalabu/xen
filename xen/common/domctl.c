@@ -1026,8 +1026,7 @@ long do_domctl(XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
         break;
 
     case XEN_DOMCTL_vm_event_op:
-        ret = vm_event_domctl(d, &op->u.vm_event_op,
-                              guest_handle_cast(u_domctl, void));
+        ret = vm_event_domctl(d, &op->u.vm_event_op, u_domctl);
         copyback = 1;
         break;
 
