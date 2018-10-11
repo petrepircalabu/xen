@@ -145,6 +145,8 @@ void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int type,
     return ring_page;
 }
 
+struct xenforeignmemory_resource_handle;
+
 xenforeignmemory_resource_handle *xc_vm_event_enable_ex(xc_interface *xch,
     uint32_t domain_id, int type,
     void **_ring_buffer, uint32_t ring_frames, uint32_t *ring_port,

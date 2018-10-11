@@ -49,6 +49,32 @@ struct vm_event_buffer
     mfn_t mfn[0];
 };
 
+/* VM event */
+struct vm_event_domain
+{
+    /* ring lock */
+    spinlock_t ring_lock;
+    /* The ring has 64 entries */
+    unsigned char foreign_producers;
+    unsigned char target_producers;
+    /* shared ring */
+    struct vm_event_buffer *ring;
+    /* front-end ring */
+    vm_event_front_ring_t front_ring;
+    /* vm_event bit for vcpu->pause_flags */
+    int pause_flag;
+    /* list of vcpus waiting for room in the ring */
+    struct waitqueue_head wq;
+    /* the number of vCPUs blocked */
+    unsigned int blocked;
+    /* The last vcpu woken up */
+    unsigned int last_vcpu_wake_up;
+    /* Per VCPU slotted channels buffer for sync events*/
+    struct vm_event_buffer *channels;
+    /* event channel ports */
+    uint32_t xen_ports[10];
+};
+
 static int vm_event_alloc_buffer(struct domain *d, unsigned long param,
                                  unsigned int nr_frames, struct vm_event_buffer **_veb)
 {
@@ -215,16 +241,58 @@ static int vm_event_enable(
 
 static int vm_event_enable_channels(
     struct domain *d,
-    struct vm_event_domain *ved,
+    struct vm_event_domain **ved,
+    unsigned int nr_frames,
     xen_event_channel_notification_t notification_fn)
 {
     int i = 0, rc;
+    unsigned int nr_ring_frames;
 
-    vm_event_ring_lock(ved);
+    if ( nr_frames <= PFN_UP(d->max_vcpus * sizeof(vm_event_request_t)) )
+        return -EINVAL;
+
+    if ( !*ved )
+        *ved = xzalloc(struct vm_event_domain);
+    if ( !*ved )
+        return -ENOMEM;
+
+    /* Only one helper at a time. If the helper crashed,
+     * the ring is in an undefined state and so is the guest.
+     */
+    if ( (*ved)->ring )
+        return -EBUSY;
+
+    nr_ring_frames = nr_frames - PFN_UP(d->max_vcpus * sizeof(vm_event_request_t));
+
+    vm_event_ring_lock_init(*ved);
+    vm_event_ring_lock(*ved);
+
+    rc = vm_event_init_domain(d);
+    if ( rc < 0 )
+        goto err;
+
+    rc = vm_event_alloc_buffer(d, XEN_VM_EVENT_ALLOC_FROM_DOMHEAP,
+                               nr_ring_frames,
+                               &(*ved)->ring);
+    if ( rc != 0)
+        goto err;
+
+    /* Allocate event channel for the async ring*/
+    rc = alloc_unbound_xen_event_channel(d, 0, current->domain->domain_id,
+                                         notification_fn);
+    if ( rc < 0 )
+        goto err;
+
+    (*ved)->xen_ports[d->max_vcpus] = rc;
+
+    /* Prepare ring buffer */
+    FRONT_RING_INIT(&(*ved)->front_ring,
+                    (vm_event_sring_t *)(*ved)->ring->va,
+                    (*ved)->ring->nr_frames * PAGE_SIZE);
 
     rc = vm_event_alloc_buffer(d, XEN_VM_EVENT_ALLOC_FROM_DOMHEAP,
                                PFN_UP(d->max_vcpus * sizeof(vm_event_request_t)),
-                               &ved->channels);
+                               &(*ved)->channels);
     if ( rc != 0)
         goto err;
 
@@ -235,17 +303,18 @@ static int vm_event_enable_channels(
         if ( rc < 0 )
             goto err;
 
-        ved->xen_ports[i] = rc;
+        (*ved)->xen_ports[i] = rc;
     }
 
-    vm_event_ring_unlock(ved);
+    vm_event_ring_unlock(*ved);
     return 0;
 
 err:
     while (i--)
-        free_xen_event_channel(d, ved->xen_ports[i]);
+        evtchn_close(d, (*ved)->xen_ports[i], 0);
+    evtchn_close(d, (*ved)->xen_ports[d->max_vcpus], 0);
 
-    vm_event_ring_unlock(ved);
+    vm_event_ring_unlock(*ved);
     return rc;
 }
 
@@ -337,7 +406,7 @@ static int vm_event_disable(struct domain *d, struct vm_event_domain **ved)
 
         vm_event_ring_lock(*ved);
 
-        if ( !list_empty(&(*ved)->wq.list) )
+        if ( !(*ved)->channels && !list_empty(&(*ved)->wq.list) )
         {
             vm_event_ring_unlock(*ved);
             return -EBUSY;
@@ -345,6 +414,12 @@ static int vm_event_disable(struct domain *d, struct vm_event_domain **ved)
 
         /* Free domU's event channel and leave the other one unbound */
         free_xen_event_channel(d, (*ved)->xen_ports[d->max_vcpus]);
+        if ( (*ved)->channels )
+        {
+            int i;
+            for( i = 0; i < d->max_vcpus; i++ )
+                free_xen_event_channel(d, (*ved)->xen_ports[i]);
+        }
 
         /* Unblock all vCPUs */
         for_each_vcpu ( d, v )
@@ -357,6 +432,7 @@ static int vm_event_disable(struct domain *d, struct vm_event_domain **ved)
         }
 
         vm_event_free_buffer(&(*ved)->ring);
+        vm_event_free_buffer(&(*ved)->channels);
         vm_event_cleanup_domain(d);
 
         vm_event_ring_unlock(*ved);
@@ -430,6 +506,7 @@ void vm_event_put_request(struct domain *d,
     {
         memcpy( ved->channels->va + curr->vcpu_id * sizeof(vm_event_request_t), req, sizeof(*req) );
         vm_event_ring_unlock(ved);
+        notify_via_xen_event_channel(d, ved->xen_ports[curr->vcpu_id]);
         return;
     }
 
@@ -1087,9 +1164,7 @@ int vm_event_get_ring_frames(struct domain *d, unsigned int id,
         return -ENOSYS;
     }
 
-    rc = vm_event_enable(d, ved, XEN_VM_EVENT_ALLOC_FROM_DOMHEAP,
-                         nr_frames, pause_flag,
-                         notification_fn);
+    rc = vm_event_enable_channels(d, ved, nr_frames, notification_fn);
     if ( rc )
         return rc;
 
@@ -1103,28 +1178,28 @@ int vm_event_get_channel_frames(struct domain *d, unsigned int id,
                                 unsigned long frame, unsigned int nr_frames,
                                 xen_pfn_t mfn_list[])
 {
-    int rc, i;
-    struct vm_event_domain *ved;
+    int rc, i, j;
+    struct vm_event_domain **_ved;
 
     switch ( id )
     {
     case XEN_VM_EVENT_TYPE_MONITOR:
-        ved = d->vm_event_monitor;
+        _ved = &d->vm_event_monitor;
         break;
 
     default:
         return -ENOSYS;
     }
 
-    if ( !vm_event_check_ring(ved) )
-        return -EINVAL;
-
-    rc = vm_event_enable_channels(d, ved, monitor_sync_notification);
+    rc = vm_event_enable_channels(d, _ved, nr_frames, monitor_sync_notification);
     if ( rc != 0 )
         return rc;
 
-    for ( i = 0; i < nr_frames; i++ )
-        mfn_list[i] = mfn_x(ved->channels->mfn[i]);
+    j = 0;
+    for ( i = 0; i < (*_ved)->ring->nr_frames; i++ )
+        mfn_list[j++] = mfn_x((*_ved)->ring->mfn[i]);
+    for ( i = 0; i < (*_ved)->channels->nr_frames; i++ )
+        mfn_list[j++] = mfn_x((*_ved)->channels->mfn[i]);
 
     return rc;
 }

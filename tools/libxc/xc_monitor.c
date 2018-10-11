@@ -35,7 +35,7 @@ void *xc_monitor_enable(xc_interface *xch, uint32_t domain_id, uint32_t *port)
     }
 
     buffer = xc_vm_event_enable(xch, domain_id,
-                                HVM_PARAM_MONITOR_RING_PFN,
+                                XEN_VM_EVENT_TYPE_MONITOR,
                                 port);
     saved_errno = errno;
     if ( xc_domain_unpause(xch, domain_id) )
@@ -48,14 +48,42 @@ void *xc_monitor_enable(xc_interface *xch, uint32_t domain_id, uint32_t *port)
     errno = saved_errno;
     return buffer;
 }
-/*
-void *xc_monitor_enable_ex(xc_interface *xch, uint32_t domain_id, int order,
-                           uint32_t *port)
+
+xenforeignmemory_resource_handle *xc_monitor_enable_ex(
+    xc_interface *xch,
+    uint32_t domain_id,
+    void **_ring_buffer,
+    uint32_t ring_frames,
+    uint32_t *ring_port,
+    void **_sync_buffer,
+    uint32_t *sync_ports,
+    uint32_t nr_sync_channels)
 {
-    return xc_vm_event_enable_ex(xch, domain_id, XEN_VM_EVENT_TYPE_MONITOR,
-                                 order, port);
+    xenforeignmemory_resource_handle *fres;
+    int saved_errno;
+
+    /* Pause the domain for ring page setup */
+    if ( xc_domain_pause(xch, domain_id) )
+    {
+        PERROR("Unable to pause domain\n");
+        return NULL;
+    }
+
+    fres = xc_vm_event_enable_ex(xch, domain_id, XEN_VM_EVENT_TYPE_MONITOR,
+                                _ring_buffer, ring_frames, ring_port,
+                                _sync_buffer, sync_ports, nr_sync_channels);
+
+    saved_errno = errno;
+    if ( xc_domain_unpause(xch, domain_id) )
+    {
+        if ( fres )
+            saved_errno = errno;
+        PERROR("Unable to unpause domain");
+    }
+
+    errno = saved_errno;
+    return fres;
 }
-*/
 
 int xc_monitor_disable(xc_interface *xch, uint32_t domain_id)
 {

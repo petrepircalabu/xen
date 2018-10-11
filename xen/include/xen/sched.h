@@ -278,34 +278,6 @@ struct vcpu
 #define domain_lock(d) spin_lock_recursive(&(d)->domain_lock)
 #define domain_unlock(d) spin_unlock_recursive(&(d)->domain_lock)
 
-struct vm_event_buffer;
-
-/* VM event */
-struct vm_event_domain
-{
-    /* ring lock */
-    spinlock_t ring_lock;
-    /* The ring has 64 entries */
-    unsigned char foreign_producers;
-    unsigned char target_producers;
-    /* shared ring */
-    struct vm_event_buffer *ring;
-    /* front-end ring */
-    vm_event_front_ring_t front_ring;
-    /* vm_event bit for vcpu->pause_flags */
-    int pause_flag;
-    /* list of vcpus waiting for room in the ring */
-    struct waitqueue_head wq;
-    /* the number of vCPUs blocked */
-    unsigned int blocked;
-    /* The last vcpu woken up */
-    unsigned int last_vcpu_wake_up;
-    /* Per VCPU slotted channels buffer for sync events*/
-    struct vm_event_buffer *channels;
-    /* event channel ports */
-    uint32_t xen_ports[10];
-};
-
 struct evtchn_port_ops;
 
 enum guest_type {

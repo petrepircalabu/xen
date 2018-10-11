@@ -62,14 +62,22 @@
 /* From xen/include/asm-x86/x86-defns.h */
 #define X86_CR4_PGE        0x00000080 /* enable global pages */
 
+#ifndef PFN_UP
+#define PFN_UP(x)     (((x) + XC_PAGE_SIZE-1) >> XC_PAGE_SHIFT)
+#endif /* PFN_UP */
+
+
 typedef struct vm_event {
     domid_t domain_id;
-    xenevtchn_handle *xce_handle;
-    int port;
+    xenevtchn_handle *xce_handles[10];
+    int ports[10];
     vm_event_back_ring_t back_ring;
-    uint32_t evtchn_port;
+    uint32_t evtchn_ports[10];
     void *ring_buffer;
     unsigned int ring_page_count;
+    void *channel_buffer;
+    int nr_channels;
+    xenforeignmemory_resource_handle *fres;
 } vm_event_t;
 
 typedef struct xenaccess {
@@ -81,52 +89,131 @@ typedef struct xenaccess {
 } xenaccess_t;
 
 static int interrupted;
-bool evtchn_bind = 0, evtchn_open = 0, mem_access_enable = 0;
+bool evtchn_bind = 0, mem_access_enable = 0;
 
 static void close_handler(int sig)
 {
     interrupted = sig;
 }
 
-int xc_wait_for_event_or_timeout(xc_interface *xch, xenevtchn_handle *xce, unsigned long ms)
+int xc_wait_for_events_or_timeout(xc_interface *xch, xenevtchn_handle *xce[], unsigned int count,
+                                  unsigned long ms, int ports[])
 {
-    struct pollfd fd = { .fd = xenevtchn_fd(xce), .events = POLLIN | POLLERR };
-    int port;
-    int rc;
+    struct pollfd fds[count];
+    int rc, i, fd_count = 0;
 
-    rc = poll(&fd, 1, ms);
-    if ( rc == -1 )
+    for ( i = 0; i < count; i++ )
     {
-        if (errno == EINTR)
+        fds[i].fd = xenevtchn_fd(xce[i]);
+        fds[i].events = POLLIN | POLLERR;
+        fds[i].revents = 0;
+    }
+
+    rc = poll(fds, count, ms);
+    switch (rc )
+    {
+        case -1:
+        {
+            if (errno == EINTR)
+            {
+                ERROR("Pollus interruptus\n");
+                return 0;
+            }
+
+            ERROR("Poll exited with an error");
+            return -1;
+        }
+        case 0:
             return 0;
-
-        ERROR("Poll exited with an error");
-        goto err;
     }
 
-    if ( rc == 1 )
+    for ( i = 0 ; i < count; i++)
     {
-        port = xenevtchn_pending(xce);
-        if ( port == -1 )
+        if ( fds[i].revents & POLLIN )
         {
-            ERROR("Failed to read port from event channel");
-            goto err;
-        }
-
-        rc = xenevtchn_unmask(xce, port);
-        if ( rc != 0 )
-        {
-            ERROR("Failed to unmask event channel port");
-            goto err;
+            int port = xenevtchn_pending(xce[i]);
+            if ( port == -1 )
+            {
+                ERROR("Failed to read port from event channel");
+                goto err;
+            }
+            if ( xenevtchn_unmask(xce[i], port) )
+            {
+                ERROR("Failed to unmask event channel port");
+                goto err;
+            }
+            ports[fd_count++] = i;
         }
     }
-    else
-        port = -1;
 
-    return port;
+    return fd_count;
 
- err:
+err:
+    ERROR("Returning error errno=%d", errno);
     return -errno;
+}
+
+int xenaccess_evtchn_bind(xenaccess_t *xenaccess)
+{
+    int i, rc;
+
+    for ( i = 0; i <= xenaccess->vm_event.nr_channels; i++)
+    {
+        /* Open event channel */
+        xenaccess->vm_event.xce_handles[i] = xenevtchn_open(NULL, 0);
+        if ( xenaccess->vm_event.xce_handles[i] == NULL )
+        {
+            ERROR("Failed to open event channel");
+            rc = -1;
+            goto err;
+        }
+
+        /* Bind event notification */
+        rc = xenevtchn_bind_interdomain(xenaccess->vm_event.xce_handles[i],
+                                        xenaccess->vm_event.domain_id,
+                                        xenaccess->vm_event.evtchn_ports[i]);
+        if ( rc < 0 )
+        {
+            ERROR("Failed to bind event channel");
+            goto err;
+        }
+
+        xenaccess->vm_event.ports[i] = rc;
+    }
+
+    evtchn_bind = true;
+    return 0;
+
+err:
+    for ( ; i >= 0; i-- )
+    {
+        if ( xenaccess->vm_event.xce_handles[i] )
+        {
+            xenevtchn_unbind(xenaccess->vm_event.xce_handles[i],
+                             xenaccess->vm_event.evtchn_ports[i]);
+            xenevtchn_close(xenaccess->vm_event.xce_handles[i]);
+            xenaccess->vm_event.xce_handles[i] = NULL;
+            xenaccess->vm_event.ports[i] = 0;
+        }
+    }
+    return rc;
+}
+
+void xenaccess_evtchn_unbind(xenaccess_t *xenaccess)
+{
+    int i;
+
+    for ( i = 0; i < xenaccess->vm_event.nr_channels; i++ )
+    {
+        if (xenaccess->vm_event.xce_handles[i])
+        {
+            xenevtchn_unbind(xenaccess->vm_event.xce_handles[i],
+                             xenaccess->vm_event.evtchn_ports[i]);
+            xenevtchn_close(xenaccess->vm_event.xce_handles[i]);
+            xenaccess->vm_event.xce_handles[i] = NULL;
+            xenaccess->vm_event.ports[i] = 0;
+        }
+    }
 }
 
 int xenaccess_teardown(xc_interface *xch, xenaccess_t *xenaccess)
@@ -141,6 +228,10 @@ int xenaccess_teardown(xc_interface *xch, xenaccess_t *xenaccess)
         munmap(xenaccess->vm_event.ring_buffer,
                xenaccess->vm_event.ring_page_count * XC_PAGE_SIZE );
 
+    if ( xenaccess->vm_event.channel_buffer )
+        munmap(xenaccess->vm_event.channel_buffer,
+               PFN_UP(xenaccess->vm_event.nr_channels * sizeof (vm_event_request_t)) * XC_PAGE_SIZE );
+
     if ( mem_access_enable )
     {
         rc = xc_monitor_disable(xenaccess->xc_handle,
@@ -152,28 +243,7 @@ int xenaccess_teardown(xc_interface *xch, xenaccess_t *xenaccess)
         }
     }
 
-    /* Unbind VIRQ */
-    if ( evtchn_bind )
-    {
-        rc = xenevtchn_unbind(xenaccess->vm_event.xce_handle,
-                              xenaccess->vm_event.port);
-        if ( rc != 0 )
-        {
-            ERROR("Error unbinding event port");
-            return rc;
-        }
-    }
-
-    /* Close event channel */
-    if ( evtchn_open )
-    {
-        rc = xenevtchn_close(xenaccess->vm_event.xce_handle);
-        if ( rc != 0 )
-        {
-            ERROR("Error closing event channel");
-            return rc;
-        }
-    }
+    xenaccess_evtchn_unbind(xenaccess);
 
     /* Close connection to Xen */
     rc = xc_interface_close(xenaccess->xc_handle);
@@ -193,6 +263,7 @@ xenaccess_t *xenaccess_init(xc_interface **xch_r, domid_t domain_id)
 {
     xenaccess_t *xenaccess = 0;
     xc_interface *xch;
+    xc_dominfo_t info;
     int rc;
 
     xch = xc_interface_open(NULL, NULL, 0);
@@ -212,25 +283,28 @@ xenaccess_t *xenaccess_init(xc_interface **xch_r, domid_t domain_id)
     /* Set domain id */
     xenaccess->vm_event.domain_id = domain_id;
 
+    if ( xc_domain_getinfo(xch, domain_id, 1, &info) != 1 )
+    {
+        ERROR("Failed to get domain info");
+        goto err;
+    }
+
+    xenaccess->vm_event.nr_channels = info.max_vcpu_id + 1;
+
     /* Ring buffer page count */
     xenaccess->vm_event.ring_page_count = 2;
 
-    xenaccess->vm_event.ring_buffer = xc_monitor_enable_ex(
+    xenaccess->vm_event.fres = xc_monitor_enable_ex(
         xenaccess->xc_handle,
         xenaccess->vm_event.domain_id,
+        &xenaccess->vm_event.ring_buffer,
         xenaccess->vm_event.ring_page_count,
-        &xenaccess->vm_event.evtchn_port);
+        &xenaccess->vm_event.evtchn_ports[xenaccess->vm_event.nr_channels],
+        &xenaccess->vm_event.channel_buffer,
+        xenaccess->vm_event.evtchn_ports,
+        xenaccess->vm_event.nr_channels);
 
-    if (xenaccess->vm_event.ring_buffer == NULL && errno == EOPNOTSUPP)
-    {
-        xenaccess->vm_event.ring_page_count = 1;
-        xenaccess->vm_event.ring_buffer =
-            xc_monitor_enable(xenaccess->xc_handle,
-                              xenaccess->vm_event.domain_id,
-                              &xenaccess->vm_event.evtchn_port);
-    }
-
-    if ( xenaccess->vm_event.ring_buffer == NULL )
+    if ( xenaccess->vm_event.fres == NULL )
     {
         switch ( errno ) {
             case EBUSY:
@@ -247,26 +321,8 @@ xenaccess_t *xenaccess_init(xc_interface **xch_r, domid_t domain_id)
     }
     mem_access_enable = 1;
 
-    /* Open event channel */
-    xenaccess->vm_event.xce_handle = xenevtchn_open(NULL, 0);
-    if ( xenaccess->vm_event.xce_handle == NULL )
-    {
-        ERROR("Failed to open event channel");
+    if ( xenaccess_evtchn_bind(xenaccess) )
         goto err;
-    }
-    evtchn_open = 1;
-
-    /* Bind event notification */
-    rc = xenevtchn_bind_interdomain(xenaccess->vm_event.xce_handle,
-                                    xenaccess->vm_event.domain_id,
-                                    xenaccess->vm_event.evtchn_port);
-    if ( rc < 0 )
-    {
-        ERROR("Failed to bind event channel");
-        goto err;
-    }
-    evtchn_bind = 1;
-    xenaccess->vm_event.port = rc;
 
     /* Initialise ring */
     SHARED_RING_INIT((vm_event_sring_t *)xenaccess->vm_event.ring_buffer);
@@ -316,6 +372,7 @@ int control_singlestep(
 /*
  * Note that this function is not thread safe.
  */
+#if 0
 static void get_request(vm_event_t *vm_event, vm_event_request_t *req)
 {
     vm_event_back_ring_t *back_ring;
@@ -331,6 +388,11 @@ static void get_request(vm_event_t *vm_event, vm_event_request_t *req)
     /* Update ring */
     back_ring->req_cons = req_cons;
     back_ring->sring->req_event = req_cons + 1;
+}
+#endif
+static void get_sync_request(vm_event_t *vm_event, int channel, vm_event_request_t *req)
+{
+    memcpy(req, vm_event->channel_buffer + channel * sizeof(*req), sizeof(*req));
 }
 
 /*
@@ -354,6 +416,7 @@ static const char* get_x86_ctrl_reg_name(uint32_t index)
 /*
  * Note that this function is not thread safe.
  */
+#if 0
 static void put_response(vm_event_t *vm_event, vm_event_response_t *rsp)
 {
     vm_event_back_ring_t *back_ring;
@@ -369,6 +432,11 @@ static void put_response(vm_event_t *vm_event, vm_event_response_t *rsp)
     /* Update ring */
     back_ring->rsp_prod_pvt = rsp_prod;
     RING_PUSH_RESPONSES(back_ring);
+}
+#endif
+static void put_sync_response(vm_event_t *vm_event, int channel, vm_event_response_t *rsp)
+{
+    memcpy(vm_event->channel_buffer + channel * sizeof(*rsp), rsp, sizeof(*rsp));
 }
 
 void usage(char* progname)
@@ -410,6 +478,7 @@ int main(int argc, char *argv[])
     int write_ctrlreg_cr4 = 0;
     int altp2m_write_no_gpt = 0;
     uint16_t altp2m_view_id = 0;
+    int ports[100];
 
     char* progname = argv[0];
     argv++;
@@ -678,6 +747,7 @@ int main(int argc, char *argv[])
     /* Wait for access */
     for (;;)
     {
+        int i;
         if ( interrupted )
         {
             /* Unregister for every event */
@@ -712,21 +782,35 @@ int main(int argc, char *argv[])
             shutting_down = 1;
         }
 
-        rc = xc_wait_for_event_or_timeout(xch, xenaccess->vm_event.xce_handle, 100);
-        if ( rc < -1 )
+        rc = xc_wait_for_events_or_timeout(xch, xenaccess->vm_event.xce_handles,
+                                           xenaccess->vm_event.nr_channels, 100, ports);
+        if ( rc <= -1 )
         {
             ERROR("Error getting event");
             interrupted = -1;
             continue;
         }
-        else if ( rc != -1 )
+        else if ( rc == 0 )
+        {
+            if ( shutting_down )
+                break;
+            else
+                continue;
+        }
+        else if ( rc > 0 )
         {
             DPRINTF("Got event from Xen\n");
         }
 
-        while ( RING_HAS_UNCONSUMED_REQUESTS(&xenaccess->vm_event.back_ring) )
+        for ( i = 0 ; i < rc ; i++ )
+        //while ( RING_HAS_UNCONSUMED_REQUESTS(&xenaccess->vm_event.back_ring) )
         {
-            get_request(&xenaccess->vm_event, &req);
+            // ignore async requests for now
+            if ( ports[i] == xenaccess->vm_event.nr_channels )
+                continue;
+
+            //get_request(&xenaccess->vm_event, &req);
+            get_sync_request(&xenaccess->vm_event, ports[i], &req);
 
             if ( req.version != VM_EVENT_INTERFACE_VERSION )
             {
@@ -911,19 +995,21 @@ int main(int argc, char *argv[])
             }
 
             /* Put the response on the ring */
-            put_response(&xenaccess->vm_event, &rsp);
+            put_sync_response(&xenaccess->vm_event, ports[i], &rsp);
+
+            /* Tell Xen page is ready */
+            rc = xenevtchn_notify(xenaccess->vm_event.xce_handles[ports[i]],
+                                  xenaccess->vm_event.ports[ports[i]]);
+
+            if ( rc != 0 )
+            {
+                ERROR("Error resuming page");
+                interrupted = -1;
+            }
+
+            if ( shutting_down )
+                break;
         }
-
-        /* Tell Xen page is ready */
-        rc = xenevtchn_notify(xenaccess->vm_event.xce_handle,
-                              xenaccess->vm_event.port);
-
-        if ( rc != 0 )
-        {
-            ERROR("Error resuming page");
-            interrupted = -1;
-        }
-
         if ( shutting_down )
             break;
     }
