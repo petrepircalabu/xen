@@ -584,8 +584,8 @@ static bool vm_event_get_response_sync(struct domain *d, struct vm_event_domain 
     return true;
 }
 
-void vm_event_resume_sync(struct domain *d, struct vm_event_domain *ved,
-                          struct vcpu *v)
+static void vm_event_resume_sync(struct domain *d, struct vm_event_domain *ved,
+                                 struct vcpu *v)
 {
     vm_event_response_t rsp;
 
@@ -657,7 +657,7 @@ void vm_event_resume_sync(struct domain *d, struct vm_event_domain *ved,
  * Note: responses are handled the same way regardless of which ring they
  * arrive on.
  */
-void vm_event_resume(struct domain *d, struct vm_event_domain *ved)
+static void vm_event_resume(struct domain *d, struct vm_event_domain *ved)
 {
     vm_event_response_t rsp;
 
