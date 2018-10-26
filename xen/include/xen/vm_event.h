@@ -64,6 +64,10 @@ void vm_event_put_request(struct vm_event_domain *ved,
 int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
                     XEN_GUEST_HANDLE_PARAM(void) u_domctl);
 
+int vm_event_get_frames(struct domain *d, unsigned int id,
+                        unsigned long frame, unsigned int nr_frames,
+                        xen_pfn_t mfn_list[]);
+
 void vm_event_vcpu_pause(struct vcpu *v);
 void vm_event_vcpu_unpause(struct vcpu *v);
 

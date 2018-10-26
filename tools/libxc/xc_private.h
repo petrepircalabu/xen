@@ -420,6 +420,20 @@ int xc_vm_event_control(xc_interface *xch, uint32_t domain_id, unsigned int op,
 void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int type,
                          uint32_t *port);
 
+/*
+ * Enables vm_event for using the xenforeignmemory_map_resource interface.
+ * The vm_event type can be XEN_VM_EVENT_TYPE_(PAGING/MONITOR/SHARING).
+ *
+ * The function returns:
+ *  - A ring for asynchronous vm_events.
+ *  - A slotted buffer for synchronous vm_events (one slot per vcpu)
+ *  - xenforeignmemory_resource_handle used exclusively for resource cleanup
+ */
+xenforeignmemory_resource_handle *xc_vm_event_enable_ex(xc_interface *xch,
+    uint32_t domain_id, int type,
+    void **_ring_buffer, uint32_t ring_frames, uint32_t *ring_port,
+    void **_sync_buffer, uint32_t *sync_ports, uint32_t nr_sync_channels);
+
 int do_dm_op(xc_interface *xch, uint32_t domid, unsigned int nr_bufs, ...);
 
 #endif /* __XC_PRIVATE_H__ */

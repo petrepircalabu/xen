@@ -38,7 +38,7 @@
 #include "hvm/save.h"
 #include "memory.h"
 
-#define XEN_DOMCTL_INTERFACE_VERSION 0x00000011
+#define XEN_DOMCTL_INTERFACE_VERSION 0x00000012
 
 /*
  * NB. xen_domctl.domain is an IN/OUT parameter for this operation.
@@ -836,6 +836,7 @@ struct xen_domctl_gdbsx_domstatus {
 #define XEN_VM_EVENT_ENABLE               0
 #define XEN_VM_EVENT_DISABLE              1
 #define XEN_VM_EVENT_RESUME               2
+#define XEN_VM_EVENT_GET_PORTS            3
 
 /*
  * Use for teardown/setup of helper<->hypervisor interface for paging,
@@ -843,10 +844,26 @@ struct xen_domctl_gdbsx_domstatus {
  */
 /* XEN_DOMCTL_vm_event_op */
 struct xen_domctl_vm_event_op {
-    uint32_t        op;           /* XEN_VM_EVENT_* */
-    uint32_t        type;         /* XEN_VM_EVENT_TYPE_* */
+    /* IN: Xen vm_event opcode (XEN_VM_EVENT_*) */
+    uint32_t            op;
+    /* IN: Xen vm event ring type (XEN_VM_EVENT_TYPE_*) */
+    uint32_t            type;
 
-    uint32_t        port;         /* OUT: event channel for ring */
+    union {
+        struct {
+            /* OUT: remote port for event channel ring */
+            uint32_t    port;
+        } enable;
+        struct {
+            /* OUT: remote port for the async event channel ring */
+            uint32_t    async;
+            /*
+             * OUT: remote ports for the sync event vm_event channels
+             * The number for ports will be equal with the vcpu count.
+             */
+            XEN_GUEST_HANDLE_64(uint32) sync;
+        } get_ports;
+    } u;
 };
 
 /*

@@ -2014,6 +2014,17 @@ int xc_get_mem_access(xc_interface *xch, uint32_t domain_id,
  * Caller has to unmap this page when done.
  */
 void *xc_monitor_enable(xc_interface *xch, uint32_t domain_id, uint32_t *port);
+
+struct xenforeignmemory_resource_handle *xc_monitor_enable_ex(
+    xc_interface *xch,
+    uint32_t domain_id,
+    void **_ring_buffer,
+    uint32_t ring_frames,
+    uint32_t *ring_port,
+    void **_sync_buffer,
+    uint32_t *sync_ports,
+    uint32_t nr_sync_channels);
+
 int xc_monitor_disable(xc_interface *xch, uint32_t domain_id);
 int xc_monitor_resume(xc_interface *xch, uint32_t domain_id);
 /*

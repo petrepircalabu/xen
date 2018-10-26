@@ -28,6 +28,8 @@
 #include <asm/p2m.h>
 #include <asm/monitor.h>
 #include <asm/vm_event.h>
+#include <xen/guest_access.h>
+#include <xen/vmap.h>
 #include <xsm/xsm.h>
 
 /* for public/io/ring.h macros */
@@ -40,6 +42,7 @@
 #define vm_event_unlock(_ved)     spin_unlock(&(_ved)->lock)
 
 #define to_vm_event_domain_ring(_ved) container_of(_ved, struct vm_event_domain_ring, ved)
+#define to_vm_event_domain_channel(_ved) container_of(_ved, struct vm_event_domain_channel, ved)
 
 struct vm_event_domain
 {
@@ -48,7 +51,8 @@ struct vm_event_domain
     int (*claim_slot)(struct vm_event_domain *ved, bool allow_sleep);
     void (*release_slot)(struct vm_event_domain *ved);
     void (*put_request)(struct vm_event_domain *ved, vm_event_request_t *req);
-    int (*get_response)(struct vm_event_domain *ved, vm_event_response_t *rsp);
+    int (*get_response)(struct vm_event_domain *ved, struct vcpu *v,
+                        unsigned int port, vm_event_response_t *rsp);
     int (*disable)(struct vm_event_domain **_ved);
 
     /* The domain associated with the VM event */
@@ -57,11 +61,6 @@ struct vm_event_domain
     /* ring lock */
     spinlock_t lock;
 };
-
-bool vm_event_check(struct vm_event_domain *ved)
-{
-    return (ved && ved->check(ved));
-}
 
 /* VM event domain ring implementation */
 struct vm_event_domain_ring
@@ -78,20 +77,55 @@ struct vm_event_domain_ring
     vm_event_front_ring_t front_ring;
     /* event channel port (vcpu0 only) */
     int xen_port;
-    /* vm_event bit for vcpu->pause_flags */
-    int pause_flag;
     /* list of vcpus waiting for room in the ring */
     struct waitqueue_head wq;
     /* the number of vCPUs blocked */
     unsigned int blocked;
+    /* vm_event bit for vcpu->pause_flags */
+    int pause_flag;
     /* The last vcpu woken up */
     unsigned int last_vcpu_wake_up;
 };
+
+struct vm_event_buffer
+{
+    void *va;
+    unsigned int nr_frames;
+    mfn_t mfn[0];
+};
+
+struct vm_event_domain_channel
+{
+    /* VM event domain */
+    struct vm_event_domain ved;
+    /* ring for asynchronous vm events */
+    struct vm_event_buffer *ring;
+    /* front-end ring */
+    vm_event_front_ring_t front_ring;
+    /* per vcpu channels for synchronous vm events */
+    struct vm_event_buffer *channels;
+    /*
+     * event channels ports
+     * - one per vcpu for the synchronous channels.
+     * - one for the asynchronous ring.
+     */
+    uint32_t xen_ports[0];
+};
+
+bool vm_event_check(struct vm_event_domain *ved)
+{
+    return (ved && ved->check(ved));
+}
 
 static bool vm_event_ring_check(struct vm_event_domain *ved)
 {
     struct vm_event_domain_ring *impl = to_vm_event_domain_ring(ved);
     return impl->ring_page != NULL;
+}
+
+static bool is_vm_event_domain_ring(struct vm_event_domain *ved)
+{
+    return ved->check == vm_event_ring_check;
 }
 
 static unsigned int vm_event_ring_available(struct vm_event_domain_ring *ved)
@@ -317,12 +351,15 @@ static void vm_event_ring_put_request(struct vm_event_domain *ved,
     notify_via_xen_event_channel(d, impl->xen_port);
 }
 
-static int vm_event_ring_get_response(struct vm_event_domain *ved,
-                                      vm_event_response_t *rsp)
+static int vm_event_ring_get_response(
+    struct vm_event_domain *ved,
+    struct vcpu *v,
+    unsigned int port,
+    vm_event_response_t *rsp)
 {
     vm_event_front_ring_t *front_ring;
     RING_IDX rsp_cons;
-    struct vm_event_domain_ring *impl = (struct vm_event_domain_ring *)ved;
+    struct vm_event_domain_ring *impl = to_vm_event_domain_ring(ved);
 
     vm_event_lock(ved);
 
@@ -332,7 +369,7 @@ static int vm_event_ring_get_response(struct vm_event_domain *ved,
     if ( !RING_HAS_UNCONSUMED_RESPONSES(front_ring) )
     {
         vm_event_unlock(ved);
-        return 0;
+        return -1;
     }
 
     /* Copy response */
@@ -353,6 +390,35 @@ static int vm_event_ring_get_response(struct vm_event_domain *ved,
 }
 
 /*
+ * The response is received only from the sync channels
+ */
+static int vm_event_channel_get_response(
+    struct vm_event_domain *ved,
+    struct vcpu *v,
+    unsigned int port,
+    vm_event_response_t *rsp)
+{
+    struct vm_event_domain_channel *impl = to_vm_event_domain_channel(ved);
+    struct vm_event_slot *slot = impl->channels->va + v->vcpu_id * sizeof(struct vm_event_slot);
+
+    vm_event_lock(ved);
+
+    if ( slot->state != VM_EVENT_SLOT_STATE_FINISH )
+    {
+        gdprintk(XENLOG_G_WARNING, "The VM event slot state for d%dv%d is invalid.\n",
+                 ved->d->domain_id, v->vcpu_id);
+        vm_event_unlock(ved);
+        return -1;
+    }
+
+    memcpy(rsp, &slot->u.rsp, sizeof(*rsp));
+    slot->state = VM_EVENT_SLOT_STATE_IDLE;
+
+    vm_event_unlock(ved);
+    return 0;
+}
+
+/*
  * Pull all responses from the given ring and unpause the corresponding vCPU
  * if required. Based on the response type, here we can also call custom
  * handlers.
@@ -360,10 +426,11 @@ static int vm_event_ring_get_response(struct vm_event_domain *ved,
  * Note: responses are handled the same way regardless of which ring they
  * arrive on.
  */
-static int vm_event_resume(struct vm_event_domain *ved)
+static int vm_event_resume(struct vm_event_domain *ved, struct vcpu *v, unsigned int port)
 {
     vm_event_response_t rsp;
     struct domain *d;
+    int rc;
 
     if (! vm_event_check(ved))
         return -ENODEV;
@@ -380,22 +447,25 @@ static int vm_event_resume(struct vm_event_domain *ved)
      */
     ASSERT(d != current->domain);
 
-    /* Pull all responses off the ring. */
-    while ( ved->get_response(ved, &rsp) )
+    /* Loop until all available responses are read. */
+    do
     {
-        struct vcpu *v;
+        struct vcpu *rsp_v;
+        rc = ved->get_response(ved, v, port, &rsp);
+        if ( rc < 0 )
+            break;
 
         if ( rsp.version != VM_EVENT_INTERFACE_VERSION )
         {
             printk(XENLOG_G_WARNING "vm_event interface version mismatch\n");
-            continue;
+            goto end_loop;
         }
 
         /* Validate the vcpu_id in the response. */
         if ( (rsp.vcpu_id >= d->max_vcpus) || !d->vcpu[rsp.vcpu_id] )
-            continue;
+            goto end_loop;
 
-        v = d->vcpu[rsp.vcpu_id];
+        rsp_v = d->vcpu[rsp.vcpu_id];
 
         /*
          * In some cases the response type needs extra handling, so here
@@ -403,7 +473,7 @@ static int vm_event_resume(struct vm_event_domain *ved)
          */
 
         /* Check flags which apply only when the vCPU is paused */
-        if ( atomic_read(&v->vm_event_pause_count) )
+        if ( atomic_read(&rsp_v->vm_event_pause_count) )
         {
 #ifdef CONFIG_HAS_MEM_PAGING
             if ( rsp.reason == VM_EVENT_REASON_MEM_PAGING )
@@ -415,34 +485,36 @@ static int vm_event_resume(struct vm_event_domain *ved)
              * has to set arch-specific flags when supported, and to avoid
              * bitmask overhead when it isn't supported.
              */
-            vm_event_emulate_check(v, &rsp);
+            vm_event_emulate_check(rsp_v, &rsp);
 
             /*
              * Check in arch-specific handler to avoid bitmask overhead when
              * not supported.
              */
-            vm_event_register_write_resume(v, &rsp);
+            vm_event_register_write_resume(rsp_v, &rsp);
 
             /*
              * Check in arch-specific handler to avoid bitmask overhead when
              * not supported.
              */
-            vm_event_toggle_singlestep(d, v, &rsp);
+            vm_event_toggle_singlestep(d, rsp_v, &rsp);
 
             /* Check for altp2m switch */
             if ( rsp.flags & VM_EVENT_FLAG_ALTERNATE_P2M )
-                p2m_altp2m_check(v, rsp.altp2m_idx);
+                p2m_altp2m_check(rsp_v, rsp.altp2m_idx);
 
             if ( rsp.flags & VM_EVENT_FLAG_SET_REGISTERS )
-                vm_event_set_registers(v, &rsp);
+                vm_event_set_registers(rsp_v, &rsp);
 
             if ( rsp.flags & VM_EVENT_FLAG_GET_NEXT_INTERRUPT )
-                vm_event_monitor_next_interrupt(v);
+                vm_event_monitor_next_interrupt(rsp_v);
 
             if ( rsp.flags & VM_EVENT_FLAG_VCPU_PAUSED )
-                vm_event_vcpu_unpause(v);
+                vm_event_vcpu_unpause(rsp_v);
         }
+end_loop: ;
     }
+    while ( rc > 0 );
 
     return 0;
 }
@@ -527,28 +599,28 @@ int __vm_event_claim_slot(struct vm_event_domain *ved, bool allow_sleep)
     if ( !vm_event_check(ved) )
         return -EOPNOTSUPP;
 
-    return ved->claim_slot(ved, allow_sleep);
+    return (ved->claim_slot) ? ved->claim_slot(ved, allow_sleep) : 0;
 }
 
 #ifdef CONFIG_HAS_MEM_PAGING
 /* Registered with Xen-bound event channel for incoming notifications. */
 static void mem_paging_notification(struct vcpu *v, unsigned int port)
 {
-    vm_event_resume(v->domain->vm_event_paging);
+    vm_event_resume(v->domain->vm_event_paging, v, port);
 }
 #endif
 
 /* Registered with Xen-bound event channel for incoming notifications. */
 static void monitor_notification(struct vcpu *v, unsigned int port)
 {
-    vm_event_resume(v->domain->vm_event_monitor);
+    vm_event_resume(v->domain->vm_event_monitor, v, port);
 }
 
 #ifdef CONFIG_HAS_MEM_SHARING
 /* Registered with Xen-bound event channel for incoming notifications. */
 static void mem_sharing_notification(struct vcpu *v, unsigned int port)
 {
-    vm_event_resume(v->domain->vm_event_share);
+    vm_event_resume(v->domain->vm_event_share, v, port);
 }
 #endif
 
@@ -565,19 +637,24 @@ void vm_event_cleanup(struct domain *d)
          * Finally, because this code path involves previously
          * pausing the domain (domain_kill), unpausing the
          * vcpus causes no harm. */
-        destroy_waitqueue_head(&to_vm_event_domain_ring(d->vm_event_paging)->wq);
+        if ( is_vm_event_domain_ring(d->vm_event_paging) )
+            destroy_waitqueue_head(&to_vm_event_domain_ring(d->vm_event_paging)->wq);
         (void)vm_event_disable(&d->vm_event_paging);
     }
 #endif
+
     if ( vm_event_check(d->vm_event_monitor) )
     {
-        destroy_waitqueue_head(&to_vm_event_domain_ring(d->vm_event_monitor)->wq);
+        if ( is_vm_event_domain_ring(d->vm_event_monitor) )
+            destroy_waitqueue_head(&to_vm_event_domain_ring(d->vm_event_monitor)->wq);
         (void)vm_event_disable(&d->vm_event_monitor);
     }
+
 #ifdef CONFIG_HAS_MEM_SHARING
     if ( vm_event_check(d->vm_event_share) )
     {
-        destroy_waitqueue_head(&to_vm_event_domain_ring(d->vm_event_share)->wq);
+        if ( is_vm_event_domain_ring(d->vm_event_share) )
+            destroy_waitqueue_head(&to_vm_event_domain_ring(d->vm_event_share)->wq);
         (void)vm_event_disable(&d->vm_event_share);
     }
 #endif
@@ -641,7 +718,7 @@ static int vm_event_ring_enable(
     if ( rc < 0 )
         goto err;
 
-    impl->xen_port = vec->port = rc;
+    impl->xen_port = vec->u.enable.port = rc;
 
     /* Prepare ring buffer */
     FRONT_RING_INIT(&impl->front_ring,
@@ -665,6 +742,294 @@ static int vm_event_ring_enable(
     vm_event_unlock(&impl->ved);
     XFREE(impl);
 
+    return rc;
+}
+
+/*
+ * Helper functions for allocating / freeing vm_event buffers
+ */
+static int vm_event_alloc_buffer(struct domain *d, unsigned int nr_frames,
+                                 struct vm_event_buffer **_veb)
+{
+    struct vm_event_buffer *veb;
+    int i = 0, rc;
+
+    veb = _xzalloc(sizeof(struct vm_event_buffer) + nr_frames * sizeof(mfn_t),
+                   __alignof__(struct vm_event_buffer));
+    if ( unlikely(!veb) )
+    {
+        rc = -ENOMEM;
+        goto err;
+    }
+
+    veb->nr_frames = nr_frames;
+
+    for ( i = 0; i < nr_frames; i++ )
+    {
+        struct page_info *page = alloc_domheap_page(d, 0);
+
+        if ( !page )
+        {
+            rc = -ENOMEM;
+            goto err;
+        }
+
+        if ( !get_page_and_type(page, d, PGT_writable_page) )
+        {
+            domain_crash(d);
+            rc = -ENODATA;
+            goto err;
+        }
+
+        veb->mfn[i] = page_to_mfn(page);
+    }
+
+    veb->va = vmap(veb->mfn, nr_frames);
+    if ( !veb->va )
+    {
+        rc = -ENOMEM;
+        goto err;
+    }
+
+    for( i = 0; i < nr_frames; i++ )
+        clear_page(veb->va + i * PAGE_SIZE);
+
+    *_veb = veb;
+    return 0;
+
+err:
+    while ( --i >= 0 )
+    {
+        struct page_info *page = mfn_to_page(veb->mfn[i]);
+
+        if ( test_and_clear_bit(_PGC_allocated, &page->count_info) )
+            put_page(page);
+        put_page_and_type(page);
+    }
+
+    xfree(veb);
+    return rc;
+}
+
+static void vm_event_free_buffer(struct vm_event_buffer **_veb)
+{
+    struct vm_event_buffer *veb = *_veb;
+
+    if ( !veb )
+        return;
+
+    if ( veb->va )
+    {
+        int i;
+
+        vunmap(veb->va);
+        for ( i = 0; i < veb->nr_frames; i++ )
+        {
+            struct page_info *page = mfn_to_page(veb->mfn[i]);
+
+            if ( test_and_clear_bit(_PGC_allocated, &page->count_info) )
+                put_page(page);
+            put_page_and_type(page);
+        }
+    }
+    XFREE(*_veb);
+}
+
+static bool vm_event_channel_check(struct vm_event_domain *ved)
+{
+    struct vm_event_domain_channel *impl = to_vm_event_domain_channel(ved);
+    return impl->ring->va != NULL && impl->channels->va != NULL;
+}
+
+static void vm_event_channel_put_request(struct vm_event_domain *ved,
+                                         vm_event_request_t *req)
+{
+    struct vcpu *curr = current;
+    struct vm_event_domain_channel *impl = to_vm_event_domain_channel(ved);
+    struct domain *d;
+    struct vm_event_slot *slot;
+    bool sync;
+
+    if ( !vm_event_check(ved) )
+        return;
+
+    d = ved->d;
+    slot = impl->channels->va + req->vcpu_id * sizeof(struct vm_event_slot);
+
+    if ( curr->domain != d )
+    {
+        req->flags |= VM_EVENT_FLAG_FOREIGN;
+#ifndef NDEBUG
+        if ( !(req->flags & VM_EVENT_FLAG_VCPU_PAUSED) )
+            gdprintk(XENLOG_G_WARNING, "d%dv%d was not paused.\n",
+                     d->domain_id, req->vcpu_id);
+#endif
+    }
+
+    req->version = VM_EVENT_INTERFACE_VERSION;
+
+    sync = req->flags & VM_EVENT_FLAG_VCPU_PAUSED;
+
+    vm_event_lock(ved);
+
+    if ( sync )
+    {
+        if ( slot->state != VM_EVENT_SLOT_STATE_IDLE )
+        {
+            gdprintk(XENLOG_G_WARNING, "The VM event slot for d%dv%d is not IDLE.\n",
+                     d->domain_id, req->vcpu_id);
+            vm_event_unlock(ved);
+            return;
+        }
+        memcpy( &slot->u.req, req, sizeof(*req) );
+        slot->state = VM_EVENT_SLOT_STATE_SUBMIT;
+    }
+    else
+    {
+        vm_event_front_ring_t *front_ring;
+        RING_IDX req_prod;
+
+        /* Due to the reservations, this step must succeed. */
+        front_ring = &impl->front_ring;
+
+        /* Copy request */
+        req_prod = front_ring->req_prod_pvt;
+        memcpy(RING_GET_REQUEST(front_ring, req_prod), req, sizeof(*req));
+        req_prod++;
+
+        /* Update ring */
+        front_ring->req_prod_pvt = req_prod;
+        RING_PUSH_REQUESTS(front_ring);
+    }
+
+    vm_event_unlock(ved);
+
+    notify_via_xen_event_channel(d, impl->xen_ports[(sync) ? req->vcpu_id : d->max_vcpus]);
+}
+
+static int vm_event_channel_disable(struct vm_event_domain **_ved)
+{
+    struct vm_event_domain_channel *ved = to_vm_event_domain_channel(*_ved);
+    struct domain *d = ved->ved.d;
+    struct vcpu *v;
+    int i;
+
+    vm_event_lock(&ved->ved);
+
+    for_each_vcpu ( d, v )
+    {
+        if ( atomic_read(&v->vm_event_pause_count) )
+            vm_event_vcpu_unpause(v);
+        /*
+        if ( test_and_clear_bit(ved->ved.pause_flag, &v->pause_flags) )
+        {
+            vcpu_unpause(v);
+        }
+        */
+    }
+
+    /* Free domU's event channels and leave the other one unbound */
+    for ( i = 0; i < d->max_vcpus; i++ )
+        evtchn_close(d, ved->xen_ports[i], 0);
+    evtchn_close(d, ved->xen_ports[d->max_vcpus], 0);
+
+    vm_event_free_buffer(&ved->ring);
+    vm_event_free_buffer(&ved->channels);
+
+    vm_event_cleanup_domain(d);
+
+    vm_event_unlock(&ved->ved);
+
+    XFREE(*_ved);
+
+    return 0;
+}
+
+static int vm_event_channel_enable(
+    struct domain *d,
+    struct vm_event_domain **_ved,
+    unsigned int nr_frames,
+    xen_event_channel_notification_t notification_fn)
+{
+    int i = 0, rc;
+    struct vm_event_domain_channel *impl;
+    unsigned int nr_ring_frames, nr_channel_frames;
+
+    if ( *_ved )
+        return -EBUSY;
+
+    if ( nr_frames <= PFN_UP(d->max_vcpus * sizeof(struct vm_event_slot)) )
+        return -EINVAL;
+
+    impl = _xzalloc(sizeof(struct vm_event_domain_channel) +
+                        ( d->max_vcpus + 1 ) * sizeof(uint32_t),
+                    __alignof__(struct vm_event_domain_channel));
+    if ( !impl )
+        return -ENOMEM;
+
+    impl->ved.d = d;
+    impl->ved.check = vm_event_channel_check;
+    impl->ved.claim_slot = NULL;
+    impl->ved.release_slot = NULL;
+    impl->ved.put_request = vm_event_channel_put_request;
+    impl->ved.get_response = vm_event_channel_get_response;
+    impl->ved.disable = vm_event_channel_disable;
+
+    nr_channel_frames = PFN_UP(d->max_vcpus * sizeof(vm_event_request_t));
+    nr_ring_frames = nr_frames - nr_channel_frames;
+
+    vm_event_lock_init(&impl->ved);
+    vm_event_lock(&impl->ved);
+
+    rc = vm_event_init_domain(d);
+    if ( rc < 0 )
+        goto err;
+
+    rc = vm_event_alloc_buffer(d, nr_ring_frames, &impl->ring);
+    if ( rc )
+        goto err;
+
+    /* Allocate event channel for the async ring*/
+    rc = alloc_unbound_xen_event_channel(d, 0, current->domain->domain_id,
+                                         notification_fn);
+    if ( rc < 0 )
+        goto err;
+
+    impl->xen_ports[d->max_vcpus] = rc;
+
+    /* Prepare ring buffer */
+    FRONT_RING_INIT(&impl->front_ring,
+                    (vm_event_sring_t *)impl->ring->va,
+                    impl->ring->nr_frames * PAGE_SIZE);
+
+    rc = vm_event_alloc_buffer(d, nr_channel_frames, &impl->channels);
+    if ( rc != 0)
+        goto err;
+
+    for ( i = 0; i < d->max_vcpus; i++)
+    {
+        rc = alloc_unbound_xen_event_channel(d, i, current->domain->domain_id,
+                                             notification_fn);
+        if ( rc < 0 )
+            goto err;
+
+        impl->xen_ports[i] = rc;
+    }
+
+    *_ved = &impl->ved;
+
+    vm_event_unlock(&impl->ved);
+    return 0;
+
+err:
+    while (i--)
+        evtchn_close(d, impl->xen_ports[i], 0);
+    evtchn_close(d, impl->xen_ports[d->max_vcpus], 0);
+    vm_event_free_buffer(&impl->ring);
+    vm_event_free_buffer(&impl->channels);
+    vm_event_cleanup_domain(d);
+    vm_event_unlock(&impl->ved);
+    xfree(impl);
     return rc;
 }
 
@@ -748,7 +1113,9 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
             break;
 
         case XEN_VM_EVENT_RESUME:
-            rc = vm_event_resume(d->vm_event_paging);
+            if ( vm_event_check(d->vm_event_paging) &&
+                 is_vm_event_domain_ring(d->vm_event_paging) )
+                rc = vm_event_resume(d->vm_event_paging, NULL, 0);
             break;
 
         default:
@@ -786,7 +1153,30 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
             break;
 
         case XEN_VM_EVENT_RESUME:
-            rc = vm_event_resume(d->vm_event_monitor);
+            if ( vm_event_check(d->vm_event_monitor) &&
+                 is_vm_event_domain_ring(d->vm_event_monitor) )
+                rc = vm_event_resume(d->vm_event_monitor, NULL, 0);
+            break;
+
+        case XEN_VM_EVENT_GET_PORTS:
+            if ( !vm_event_check(d->vm_event_monitor) )
+                break;
+
+            if ( !is_vm_event_domain_ring(d->vm_event_monitor) )
+            {
+                struct vm_event_domain_channel *impl = to_vm_event_domain_channel(d->vm_event_monitor);
+
+                if ( copy_to_guest(vec->u.get_ports.sync,
+                                   impl->xen_ports,
+                                   d->max_vcpus) != 0 )
+                {
+                    rc = -EFAULT;
+                    break;
+                }
+
+                vec->u.get_ports.async = impl->xen_ports[d->max_vcpus];
+                rc = 0;
+            }
             break;
 
         default:
@@ -830,7 +1220,10 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
             break;
 
         case XEN_VM_EVENT_RESUME:
-            rc = vm_event_resume(d->vm_event_share);
+            if ( vm_event_check(d->vm_event_monitor) &&
+                 is_vm_event_domain_ring(d->vm_event_monitor) )
+                rc = vm_event_resume(d->vm_event_share, NULL, 0);
+            break;
 
         default:
             rc = -ENOSYS;
@@ -843,6 +1236,52 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
     default:
         rc = -ENOSYS;
     }
+
+    return rc;
+}
+
+int vm_event_get_frames(struct domain *d, unsigned int id,
+                        unsigned long frame, unsigned int nr_frames,
+                        xen_pfn_t mfn_list[])
+{
+    int rc = 0, i, j;
+    struct vm_event_domain **_ved;
+    struct vm_event_domain_channel *impl;
+    xen_event_channel_notification_t fn;
+
+    switch ( id )
+    {
+    case XEN_VM_EVENT_TYPE_MONITOR:
+        /* domain_pause() not required here, see XSA-99 */
+        rc = arch_monitor_init_domain(d);
+        if ( rc )
+            return rc;
+        _ved = &d->vm_event_monitor;
+        fn = monitor_notification;
+        break;
+
+    default:
+        return -ENOSYS;
+    }
+
+    rc = vm_event_channel_enable(d, _ved, nr_frames, fn);
+    if ( rc )
+    {
+        switch ( id )
+        {
+            case XEN_VM_EVENT_TYPE_MONITOR:
+                arch_monitor_cleanup_domain(d);
+                break;
+        }
+        return rc;
+    }
+
+    impl = to_vm_event_domain_channel(*_ved);
+    j = 0;
+    for ( i = 0; i < impl->ring->nr_frames; i++ )
+        mfn_list[j++] = mfn_x(impl->ring->mfn[i]);
+    for ( i = 0; i < impl->channels->nr_frames; i++ )
+        mfn_list[j++] = mfn_x(impl->channels->mfn[i]);
 
     return rc;
 }

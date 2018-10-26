@@ -388,6 +388,21 @@ typedef struct vm_event_st {
 
 DEFINE_RING_TYPES(vm_event, vm_event_request_t, vm_event_response_t);
 
+struct vm_event_slot
+{
+    uint32_t state;
+    union {
+        vm_event_request_t req;
+        vm_event_response_t rsp;
+    } u;
+};
+
+enum vm_event_slot_state {
+    VM_EVENT_SLOT_STATE_IDLE,   /* no contents */
+    VM_EVENT_SLOT_STATE_SUBMIT, /* request ready */
+    VM_EVENT_SLOT_STATE_FINISH, /* response ready */
+};
+
 #endif /* defined(__XEN__) || defined(__XEN_TOOLS__) */
 #endif /* _XEN_PUBLIC_VM_EVENT_H */
 
