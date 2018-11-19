@@ -497,6 +497,9 @@ int xc_version(xc_interface *xch, int cmd, void *arg)
             HYPERCALL_BOUNCE_SET_DIR(arg, XC_HYPERCALL_BUFFER_BOUNCE_BOTH);
             break;
         }
+    case XENVER_vm_event_version:
+        sz = 0;
+        break;
     default:
         ERROR("xc_version: unknown command %d\n", cmd);
         return -EINVAL;

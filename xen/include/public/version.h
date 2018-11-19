@@ -103,6 +103,9 @@ struct xen_build_id {
 };
 typedef struct xen_build_id xen_build_id_t;
 
+/* arg == NULL; returns the vm_event interface version */
+#define XENVER_vm_event_version 11
+
 #endif /* __XEN_PUBLIC_VERSION_H__ */
 
 /*

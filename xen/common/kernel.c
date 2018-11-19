@@ -516,6 +516,9 @@ DO(xen_version)(int cmd, XEN_GUEST_HANDLE_PARAM(void) arg)
 
         return sz;
     }
+
+    case XENVER_vm_event_version:
+        return VM_EVENT_INTERFACE_VERSION;
     }
 
     return -ENOSYS;
