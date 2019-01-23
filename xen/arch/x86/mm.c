@@ -4429,11 +4429,16 @@ int arch_acquire_resource(struct domain *d, unsigned int type,
     }
 #endif
 
+#ifdef CONFIG_HVM
     case XENMEM_resource_vm_event:
     {
-        rc = vm_event_get_frames(d, id, frame, nr_frames, mfn_list);
+        unsigned int vm_event_type = (id >> 8);
+        ioservid_t ioservid = (id & 0xFF);
+        rc = vm_event_get_frames(d, ioservid, vm_event_type, frame,
+                                 nr_frames, mfn_list);
         break;
     }
+#endif
 
     default:
         rc = -EOPNOTSUPP;

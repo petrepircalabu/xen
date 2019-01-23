@@ -64,7 +64,7 @@ void vm_event_put_request(struct vm_event_domain *ved,
 int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec,
                     XEN_GUEST_HANDLE_PARAM(void) u_domctl);
 
-int vm_event_get_frames(struct domain *d, unsigned int id,
+int vm_event_get_frames(struct domain *d, ioservid_t id, unsigned int type,
                         unsigned long frame, unsigned int nr_frames,
                         xen_pfn_t mfn_list[]);
 
@@ -75,6 +75,8 @@ void vm_event_fill_regs(vm_event_request_t *req);
 void vm_event_set_registers(struct vcpu *v, vm_event_response_t *rsp);
 
 void vm_event_monitor_next_interrupt(struct vcpu *v);
+
+void monitor_notification(struct vcpu *v, unsigned int port);
 
 #endif /* __VM_EVENT_H__ */
 

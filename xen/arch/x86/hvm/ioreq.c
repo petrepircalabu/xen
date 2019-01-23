@@ -27,6 +27,7 @@
 #include <xen/event.h>
 #include <xen/paging.h>
 #include <xen/vpci.h>
+#include <xen/vm_event.h>
 
 #include <asm/hvm/hvm.h>
 #include <asm/hvm/ioreq.h>
@@ -230,6 +231,12 @@ bool handle_hvm_io_completion(struct vcpu *v)
         vmx_realmode_emulate_one(&ctxt);
         hvm_emulate_writeback(&ctxt);
 
+        break;
+    }
+
+    case HVMIO_vm_event_completion:
+    {
+        monitor_notification(v, 0);
         break;
     }
     default:

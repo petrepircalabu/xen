@@ -33,7 +33,8 @@ enum hvm_io_completion {
     HVMIO_no_completion,
     HVMIO_mmio_completion,
     HVMIO_pio_completion,
-    HVMIO_realmode_completion
+    HVMIO_realmode_completion,
+    HVMIO_vm_event_completion
 };
 
 struct hvm_vcpu_asid {
