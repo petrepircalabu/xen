@@ -1490,7 +1490,7 @@ static int assign_device(struct domain *d, u16 seg, u8 bus, u8 devfn, u32 flag)
      * enabled for this domain */
     if ( unlikely((is_hvm_domain(d) &&
                    d->arch.hvm.mem_sharing_enabled) ||
-                  vm_event_check_ring(d->vm_event_paging) ||
+                  vm_event_check(d->vm_event_paging) ||
                   p2m_get_hostp2m(d)->global_logdirty) )
         return -EXDEV;
 
