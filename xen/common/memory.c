@@ -23,6 +23,7 @@
 #include <xen/mem_access.h>
 #include <xen/trace.h>
 #include <xen/grant_table.h>
+#include <xen/vm_event.h>
 #include <asm/current.h>
 #include <asm/hardirq.h>
 #include <asm/p2m.h>
@@ -1092,6 +1093,11 @@ static int acquire_resource(
     case XENMEM_resource_grant_table:
         rc = acquire_grant_table(d, xmar.id, xmar.frame, xmar.nr_frames,
                                  mfn_list);
+        break;
+
+    case XENMEM_resource_vm_event:
+        rc = vm_event_acquire_resource(d, xmar.id, xmar.frame,
+                                       xmar.nr_frames, mfn_list);
         break;
 
     default:

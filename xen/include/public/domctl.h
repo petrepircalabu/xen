@@ -778,16 +778,20 @@ struct xen_domctl_gdbsx_domstatus {
 #define XEN_VM_EVENT_DISABLE              1
 #define XEN_VM_EVENT_RESUME               2
 #define XEN_VM_EVENT_GET_VERSION          3
+#define XEN_VM_EVENT_ENABLE_NG            4
 
 struct xen_domctl_vm_event_op {
     uint32_t       op;           /* XEN_VM_EVENT_* */
     uint32_t       type;         /* the vm_event subsystem type:
                                   * XEN_VM_EVENT_TYPE_* */
-
     union {
         struct {
             uint32_t port;       /* OUT: event channel for ring */
         } enable;
+
+        struct {
+            uint32_t vcpu_id;    /* IN: vcpu_id*/
+        } resume;
 
         uint32_t version;
     } u;

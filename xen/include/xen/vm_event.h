@@ -24,20 +24,27 @@
 #define __VM_EVENT_H__
 
 #include <xen/errno.h>
+#include <xen/event.h>
 #include <xen/spinlock.h>
 #include <xen/types.h>
 #include <public/vm_event.h>
 
 struct domain;
 struct vm_event_domain;
+struct xen_domctl_vm_event_op;
 
 struct vm_event_ops
 {
+    int  (*acquire_resource)(struct vm_event_domain *ved,
+                             unsigned long frame, unsigned int nr_frames,
+                             xen_pfn_t mfn_list[]);
     bool (*check)(struct vm_event_domain *ved);
-    void (*cleanup)(struct vm_event_domain **_ved);
-    int (*claim_slot)(struct vm_event_domain *ved, bool allow_sleep);
+    void (*cleanup)(struct vm_event_domain *p_ved);
+    int  (*claim_slot)(struct vm_event_domain *ved, bool allow_sleep);
     void (*cancel_slot)(struct vm_event_domain *ved);
+    int  (*disable)(struct vm_event_domain **p_ved);
     void (*put_request)(struct vm_event_domain *ved, vm_event_request_t *req);
+    int  (*resume)(struct vm_event_domain *ved, uint32_t vcpu_id);
 };
 
 struct vm_event_domain
@@ -79,6 +86,9 @@ static inline int __vm_event_claim_slot(struct vm_event_domain *ved, bool allow_
     if ( !vm_event_check(ved) )
         return -EOPNOTSUPP;
 
+    if ( ved->ops->claim_slot == NULL )
+        return 0;
+
     return ved->ops->claim_slot(ved, allow_sleep);
 }
 
@@ -94,7 +104,7 @@ static inline int vm_event_claim_slot_nosleep(struct vm_event_domain *ved)
 
 static inline void vm_event_cancel_slot(struct vm_event_domain *ved)
 {
-    if ( !vm_event_check(ved) )
+    if ( !vm_event_check(ved) || ved->ops->cancel_slot == NULL )
         return;
 
     ved->ops->cancel_slot(ved);
@@ -118,6 +128,19 @@ void vm_event_fill_regs(vm_event_request_t *req);
 void vm_event_set_registers(struct vcpu *v, vm_event_response_t *rsp);
 
 void vm_event_monitor_next_interrupt(struct vcpu *v);
+
+int vm_event_channels_enable(struct domain *d,
+                             struct xen_domctl_vm_event_op *vec,
+                             struct vm_event_domain **p_ved);
+
+int vm_event_acquire_resource(struct domain *d, unsigned int id,
+                              unsigned long frame, unsigned int nr_frames,
+                              xen_pfn_t mfn_list[]);
+
+void vm_event_handle_response(struct domain *d, struct vcpu *v,
+                              vm_event_response_t *rsp);
+
+xen_event_channel_notification_t vm_event_notification_fn(uint32_t type);
 
 #endif /* __VM_EVENT_H__ */
 

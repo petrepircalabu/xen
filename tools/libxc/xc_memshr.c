@@ -203,10 +203,7 @@ int xc_memshr_range_share(xc_interface *xch,
 int xc_memshr_domain_resume(xc_interface *xch,
                             uint32_t domid)
 {
-    return xc_vm_event_control(xch, domid,
-                               XEN_VM_EVENT_RESUME,
-                               XEN_VM_EVENT_TYPE_SHARING,
-                               NULL);
+    return xc_vm_event_resume(xch, domid, XEN_VM_EVENT_TYPE_SHARING);
 }
 
 int xc_memshr_debug_gfn(xc_interface *xch,
