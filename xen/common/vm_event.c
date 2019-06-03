@@ -38,6 +38,8 @@
 /* VM event */
 struct vm_event_domain
 {
+    /* Domain reference */
+    struct domain *d;
     spinlock_t lock;
     /* The ring has 64 entries */
     unsigned char foreign_producers;
@@ -94,6 +96,8 @@ static int vm_event_enable(
     rc = vm_event_init_domain(d);
     if ( rc < 0 )
         goto err;
+
+    ved->d = d;
 
     rc = prepare_ring_for_helper(d, ring_gfn, &ved->ring_pg_struct,
                                  &ved->ring_page);
