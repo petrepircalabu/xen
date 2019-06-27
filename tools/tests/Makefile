@@ -15,6 +15,7 @@ SUBDIRS-y += xen-access
 SUBDIRS-y += xenstore
 SUBDIRS-y += depriv
 SUBDIRS-$(CONFIG_HAS_PCI) += vpci
+SUBDIRS-y += mock-test
 
 .PHONY: all clean install distclean uninstall
 all clean distclean install uninstall: %: subdirs-%

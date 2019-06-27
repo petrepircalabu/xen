@@ -306,6 +306,8 @@ enum guest_type {
     guest_type_pv, guest_type_hvm
 };
 
+struct mock_domain;
+
 struct domain
 {
     domid_t          domain_id;
@@ -491,6 +493,8 @@ struct domain
     /* Argo interdomain communication support */
     struct argo_domain *argo;
 #endif
+
+    struct mock_domain *mock;
 };
 
 /* Protect updates/reads (resp.) of domain_list and domain_hash. */

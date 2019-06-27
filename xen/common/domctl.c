@@ -26,6 +26,7 @@
 #include <xen/hypercall.h>
 #include <xen/vm_event.h>
 #include <xen/monitor.h>
+#include <xen/mock.h>
 #include <asm/current.h>
 #include <asm/irq.h>
 #include <asm/page.h>
@@ -1065,6 +1066,10 @@ long do_domctl(XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
         ret = monitor_domctl(d, &op->u.monitor_op);
         if ( !ret )
             copyback = 1;
+        break;
+
+    case XEN_DOMCTL_mock_op:
+        ret = mock_domctl(d, &op->u.mock_op);
         break;
 
     default:

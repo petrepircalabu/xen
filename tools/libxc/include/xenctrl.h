@@ -127,6 +127,7 @@ enum xc_error_code {
 
 typedef enum xc_error_code xc_error_code;
 
+struct xenforeignmemory_resource_handle;
 
 /*
  *  INITIALIZATION FUNCTIONS
@@ -2616,6 +2617,14 @@ int xc_livepatch_replace(xc_interface *xch, char *name, uint32_t timeout);
  */
 int xc_domain_cacheflush(xc_interface *xch, uint32_t domid,
                          xen_pfn_t start_pfn, xen_pfn_t nr_pfns);
+
+/*
+ * Mock operations
+ */
+int xc_mock_enable(xc_interface *xch, uint32_t domain_id, uint32_t nr_frames,
+                   void **p_addr, struct xenforeignmemory_resource_handle **fres);
+int xc_mock_disable(xc_interface *xch, uint32_t domain_id,
+                    struct xenforeignmemory_resource_handle **fres);
 
 /* Compat shims */
 #include "xenctrl_compat.h"

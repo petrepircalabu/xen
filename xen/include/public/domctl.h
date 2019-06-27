@@ -1121,6 +1121,14 @@ struct xen_domctl_vuart_op {
                                  */
 };
 
+/* XEN_DOMCTL_mock_op */
+struct xen_domctl_mock_op {
+#define XEN_DOMCTL_MOCK_OP_ENABLE    0
+#define XEN_DOMCTL_MOCK_OP_DISABLE   1
+    uint32_t op;
+    uint32_t nr_frames;
+};
+
 struct xen_domctl {
     uint32_t cmd;
 #define XEN_DOMCTL_createdomain                   1
@@ -1201,6 +1209,7 @@ struct xen_domctl {
 /* #define XEN_DOMCTL_set_gnttab_limits          80 - Moved into XEN_DOMCTL_createdomain */
 #define XEN_DOMCTL_vuart_op                      81
 #define XEN_DOMCTL_get_cpu_policy                82
+#define XEN_DOMCTL_mock_op                       83
 #define XEN_DOMCTL_gdbsx_guestmemio            1000
 #define XEN_DOMCTL_gdbsx_pausevcpu             1001
 #define XEN_DOMCTL_gdbsx_unpausevcpu           1002
@@ -1262,6 +1271,7 @@ struct xen_domctl {
         struct xen_domctl_monitor_op        monitor_op;
         struct xen_domctl_psr_alloc         psr_alloc;
         struct xen_domctl_vuart_op          vuart_op;
+        struct xen_domctl_mock_op           mock_op;
         uint8_t                             pad[128];
     } u;
 };
