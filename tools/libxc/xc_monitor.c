@@ -259,6 +259,13 @@ int xc_monitor_ng_disable(xc_interface *xch, uint32_t domain_id,
                                   fres);
 }
 
+int xc_monitor_dump_page_info(xc_interface *xch, uint32_t domain_id)
+{
+    return xc_vm_event_control(xch, domain_id,
+                               XEN_VM_EVENT_DUMP_PAGE_INFO,
+                               XEN_VM_EVENT_TYPE_MONITOR,
+                               NULL);
+}
 /*
  * Local variables:
  * mode: C

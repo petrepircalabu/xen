@@ -43,6 +43,7 @@ struct vm_event_ops
     int  (*claim_slot)(struct vm_event_domain *ved, bool allow_sleep);
     void (*cancel_slot)(struct vm_event_domain *ved);
     int  (*disable)(struct vm_event_domain **p_ved);
+    void (*dump_page_info)(struct vm_event_domain *ved, const char *ctx);
     void (*put_request)(struct vm_event_domain *ved, vm_event_request_t *req);
     int  (*resume)(struct vm_event_domain *ved, uint32_t vcpu_id);
 };

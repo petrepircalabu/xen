@@ -870,6 +870,16 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec)
             rc = vm_event_resume(d->vm_event_monitor, vec->u.resume.vcpu_id);
             break;
 
+        case XEN_VM_EVENT_DUMP_PAGE_INFO:
+            if ( !vm_event_check(d->vm_event_monitor) ||
+                 d->vm_event_monitor->ops->dump_page_info == NULL )
+                break;
+            domain_pause(d);
+            d->vm_event_monitor->ops->dump_page_info(d->vm_event_monitor, "XEN_VM_EVENT_DUMP_PAGE_INFO");
+            rc = 0;
+            domain_unpause(d);
+            break;
+
         default:
             rc = -ENOSYS;
             break;

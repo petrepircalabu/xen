@@ -129,6 +129,8 @@ static int vm_event_channels_teardown(vm_event_t *vm_event)
         }
     }
 
+    xc_monitor_dump_page_info(impl->vme.xch, impl->vme.domain_id);
+
     return xc_monitor_ng_disable(impl->vme.xch, impl->vme.domain_id, &impl->fres);
 }
 

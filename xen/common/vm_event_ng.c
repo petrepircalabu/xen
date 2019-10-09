@@ -21,9 +21,11 @@
 
 #include <xen/sched.h>
 #include <xen/event.h>
+#include <xen/keyhandler.h>
 #include <xen/vm_event.h>
 #include <xen/vmap.h>
 #include <asm/monitor.h>
+#include <asm/p2m.h>
 #include <asm/vm_event.h>
 #include <xsm/xsm.h>
 
@@ -34,6 +36,8 @@ struct vm_event_channels_domain
 {
     /* VM event domain */
     struct vm_event_domain ved;
+    /* Client domain */
+    struct domain *client;
     /* shared channels buffer */
     struct vm_event_slot *slots;
     /* the buffer size (number of frames) */
@@ -42,14 +46,56 @@ struct vm_event_channels_domain
     mfn_t mfn[0];
 };
 
+/* FIXME: the guest under test only uses one page */
+struct page_info *ugly_hack;
+
 static const struct vm_event_ops vm_event_channels_ops;
 
-static void vm_event_channels_free_buffer(struct vm_event_channels_domain *impl)
+#undef BOOLSTR
+#define BOOLSTR(cond) (( cond ) ? "true" : "false")
+static void dump_page_info(struct page_info *pg, const char *ctx)
 {
-    int i;
+    struct domain *owner;
 
-    vunmap(impl->slots);
-    impl->slots = NULL;
+    printk("\n");
+    printk("****%s: Dump page_info pg=%p\n", ctx, pg);
+    if ( pg == NULL )
+        return;
+#if 0
+    printk("In use: %s; ", BOOLSTR((pg->count_info & PGC_count_mask) != 0));
+    printk("Allocated: %s; ", BOOLSTR((pg->count_info & PGC_allocated)));
+    printk("Xen Heap: %s; ", BOOLSTR((pg->count_info & PGC_xen_heap)));
+    printk("")
+    printk("State: ");
+    if ( page_state_is(pg, inuse) )
+        printk("inuse\n");
+    else if ( page_state_is(pg, offlining) )
+        printk("offlining\n");
+    else if ( page_state_is(pg, offlined) )
+        printk("offlined\n");
+    else if ( page_state_is(pg, free) )
+        printk("free\n");
+    else
+        printk("Unknown\n");
+
+    printk("Count = %lX; ", pg->u.inuse.type_info & PGT_count_mask );
+    printk("type = %lX; ", pg->u.inuse.type_info & PGT_type_mask );
+    printk("gfn = %lX\n", gfn_x(gfn));
+#else
+    printk("count_info = %lX ", pg->count_info);
+    printk("type_info = %lX\n", pg->u.inuse.type_info);
+    owner = page_get_owner(pg);
+    if ( owner == NULL )
+        printk("Owner is NULL\n");
+    else
+        printk("Owner = %d\n", owner->domain_id);
+#endif
+}
+
+static void vm_event_channels_dump_page_info(struct vm_event_domain *ved, const char *ctx)
+{
+    struct vm_event_channels_domain *impl = to_channels(ved);
+    int i;
 
     for ( i = 0; i < impl->nr_frames; i++ )
     {
@@ -58,7 +104,45 @@ static void vm_event_channels_free_buffer(struct vm_event_channels_domain *impl)
         if ( pg == NULL )
             continue;
 
-        free_shared_domheap_page(pg);
+        printk("client paging_mode_translate = %s\n", BOOLSTR(paging_mode_translate(impl->client)));
+        dump_page_info(pg, ctx);
+    }
+}
+#undef BOOLSTR
+
+static void vm_event_channels_free_buffer(struct vm_event_channels_domain *impl)
+{
+    int i;
+
+    vunmap(impl->slots);
+    impl->slots = NULL;
+
+    if ( impl->ved.d->is_dying )
+    {
+        printk("DOMAIN IS DYING\n");
+    }
+
+    for ( i = 0; i < impl->nr_frames; i++ )
+    {
+        struct page_info *pg = mfn_to_page(impl->mfn[i]);
+
+        if ( pg == NULL )
+            continue;
+
+        dump_page_info(pg, "Before free");
+
+        if ( impl->ved.d->is_dying )
+        {
+            /*
+            if ( !test_and_clear_bit(_PGC_xen_heap, &pg->count_info) )
+                ASSERT_UNREACHABLE();
+            pg->u.inuse.type_info = 0;
+            page_set_owner(pg, NULL);
+            */
+        }
+        else
+            free_shared_domheap_page(pg);
+        dump_page_info(pg, "After free");
     }
 }
 
@@ -71,12 +155,17 @@ static int vm_event_channels_alloc_buffer(struct vm_event_channels_domain *impl)
         return -ENOMEM;
 
     for ( i = 0; i < impl->nr_frames; i++ )
+    {
         impl->mfn[i] = vmap_to_mfn(impl->slots + i * PAGE_SIZE);
+        ugly_hack = mfn_to_page(impl->mfn[i]);
+    }
 
+    vm_event_channels_dump_page_info(&impl->ved, "Before vm_event_channels_alloc_buffer");
     for ( i = 0; i < impl->nr_frames; i++ )
         share_xen_page_with_guest(mfn_to_page(impl->mfn[i]), impl->ved.d,
                                   SHARE_rw);
 
+    vm_event_channels_dump_page_info(&impl->ved, "After vm_event_channels_alloc_buffer");
     return 0;
 }
 
@@ -104,6 +193,7 @@ int vm_event_channels_enable(
     impl->nr_frames = nr_frames;
     impl->ved.d = d;
     impl->ved.ops = &vm_event_channels_ops;
+    impl->client = current->domain;
 
     rc = vm_event_init_domain(d);
     if ( rc < 0 )
@@ -276,10 +366,26 @@ static const struct vm_event_ops vm_event_channels_ops = {
     .acquire_resource = vm_event_channels_acquire_resource,
     .check = vm_event_channels_check,
     .disable = vm_event_channels_disable,
+    .dump_page_info = vm_event_channels_dump_page_info,
     .put_request = vm_event_channels_put_request,
     .resume = vm_event_channels_resume,
 };
 
+static void vm_event_usage_print_all(unsigned char key)
+{
+    printk("vm_event_slots ******************************\n");
+    dump_page_info(ugly_hack, "Keyhandler");
+    printk("******************************\n");
+
+}
+
+static int __init vm_event_usage_init(void)
+{
+    register_keyhandler('@', vm_event_usage_print_all,
+                        "print vm_event page", 1);
+    return 0;
+}
+__initcall(vm_event_usage_init);
 /*
  * Local variables:
  * mode: C

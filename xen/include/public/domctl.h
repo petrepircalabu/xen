@@ -779,6 +779,7 @@ struct xen_domctl_gdbsx_domstatus {
 #define XEN_VM_EVENT_RESUME               2
 #define XEN_VM_EVENT_GET_VERSION          3
 #define XEN_VM_EVENT_ENABLE_NG            4
+#define XEN_VM_EVENT_DUMP_PAGE_INFO       5
 
 struct xen_domctl_vm_event_op {
     uint32_t       op;           /* XEN_VM_EVENT_* */

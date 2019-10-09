@@ -234,6 +234,7 @@ int xc_vm_event_ng_enable(xc_interface *xch, uint32_t domain_id, int type,
         goto out;
     }
 
+    xc_monitor_dump_page_info(xch, domain_id);
 out:
     rc2 = xc_domain_unpause(xch, domain_id);
     if ( rc1 || rc2 )
