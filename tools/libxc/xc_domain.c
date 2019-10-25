@@ -19,6 +19,8 @@
  * Copyright (c) 2003, K A Fraser.
  */
 
+#include <time.h>
+
 #include "xc_private.h"
 #include "xc_core.h"
 #include "xg_private.h"
@@ -2172,6 +2174,43 @@ int xc_domain_debug_control(xc_interface *xc, uint32_t domid, uint32_t sop, uint
     domctl.u.debug_op.vcpu   = vcpu;
 
     return do_domctl(xc, &domctl);
+}
+
+int xc_domain_set_privileged(xc_interface *xch, uint32_t domid)
+{
+    struct timespec tim, tim2;
+    const long nanosec_sleep = 1000000;
+    float seconds_timeout = 10;
+    int saved_errno;
+    int ret = -1;
+    DECLARE_DOMCTL;
+
+    domctl.cmd = XEN_DOMCTL_set_privileged;
+    domctl.domain = domid;
+
+    do {
+        tim.tv_sec = 0;
+        tim.tv_nsec = nanosec_sleep;
+
+        ret = do_domctl( xch, &domctl );
+
+        if ( ret == -ESRCH )
+            errno = ENOENT;
+
+        if ( ret != -EBUSY )
+            break;
+
+        saved_errno = errno;
+
+        if ( nanosleep( &tim, &tim2 ) != 0 && errno == EINTR )
+            tim.tv_nsec -= tim2.tv_nsec;
+
+        errno = saved_errno;
+        seconds_timeout -= 1.0e-9 * tim.tv_nsec;
+
+    } while ( seconds_timeout > 0 );
+
+    return ret;
 }
 
 int xc_domain_p2m_audit(xc_interface *xch, 

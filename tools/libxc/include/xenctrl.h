@@ -1792,6 +1792,9 @@ int xc_domain_debug_control(xc_interface *xch,
                             uint32_t sop,
                             uint32_t vcpu);
 
+int xc_domain_set_privileged(xc_interface *xch,
+                            uint32_t domid);
+
 #if defined(__i386__) || defined(__x86_64__)
 int xc_cpuid_set(xc_interface *xch,
                  uint32_t domid,

@@ -34,6 +34,9 @@
 
 static DEFINE_SPINLOCK(domctl_lock);
 
+bool_t __read_mostly opt_introspection_extn = 0;
+boolean_param("introspection_extn", opt_introspection_extn);
+
 static int bitmap_to_xenctl_bitmap(struct xenctl_bitmap *xenctl_bitmap,
                                    const unsigned long *bitmap,
                                    unsigned int nbits)
@@ -939,6 +942,13 @@ long do_domctl(XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
         ret = monitor_domctl(d, &op->u.monitor_op);
         if ( !ret )
             copyback = 1;
+        break;
+
+    case XEN_DOMCTL_set_privileged:
+        if ( opt_introspection_extn )
+            d->is_privileged = 1;
+        else
+            ret = -ENOSYS;
         break;
 
     default:
