@@ -239,6 +239,7 @@ tools/tests/x86_emulator/x86_emulate
 tools/tests/x86_emulator/xop*.[ch]
 tools/tests/xen-access/xen-access
 tools/tests/set-privileged-guest/set-privileged-guest
+tools/tests/assign-resource/assign-resource
 tools/tests/xenstore/xs-test
 tools/tests/regression/installed/*
 tools/tests/regression/build/*
