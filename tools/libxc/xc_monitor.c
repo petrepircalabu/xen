@@ -246,6 +246,16 @@ int xc_monitor_emul_unimplemented(xc_interface *xch, uint32_t domain_id,
     return do_domctl(xch, &domctl);
 }
 
+void *xc_monitor_ng_enable(xc_interface * xch, uint32_t domain_id)
+{
+    return xc_vm_event_ng_enable(xch, domain_id, XEN_VM_EVENT_TYPE_MONITOR);
+}
+
+int xc_monitor_ng_disable(xc_interface * xch, uint32_t domain_id, void *pages)
+{
+    return xc_vm_event_ng_disable(xch, domain_id, XEN_VM_EVENT_TYPE_MONITOR, pages);
+}
+
 /*
  * Local variables:
  * mode: C

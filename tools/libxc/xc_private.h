@@ -420,6 +420,13 @@ int xc_vm_event_control(xc_interface *xch, uint32_t domain_id, unsigned int op,
 void *xc_vm_event_enable(xc_interface *xch, uint32_t domain_id, int type,
                          uint32_t *port);
 
+/*
+ * Enables/Disables vm_event using the new interface.
+ */
+void *xc_vm_event_ng_enable(xc_interface *xch, uint32_t domain_id, int type);
+int xc_vm_event_ng_disable(xc_interface *xch, uint32_t domain_id, int type,
+                           void *pages);
+
 int do_dm_op(xc_interface *xch, uint32_t domid, unsigned int nr_bufs, ...);
 
 #endif /* __XC_PRIVATE_H__ */

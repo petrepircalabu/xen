@@ -164,6 +164,20 @@ int xc_vm_event_get_version(xc_interface *xch)
     return rc;
 }
 
+void *xc_vm_event_ng_enable(xc_interface *xch, uint32_t domain_id, int type)
+{
+    void *pages = xencall_alloc_buffer_pages(xch->xcall, 1);
+
+    return pages;
+}
+
+int xc_vm_event_ng_disable(xc_interface *xch, uint32_t domain_id, int type,
+                           void *pages)
+{
+    xencall_free_buffer_pages(xch->xcall, pages, 1);
+    return 0;
+}
+
 /*
  * Local variables:
  * mode: C
