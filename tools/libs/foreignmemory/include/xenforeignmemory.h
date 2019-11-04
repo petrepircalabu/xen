@@ -179,6 +179,10 @@ xenforeignmemory_resource_handle *xenforeignmemory_map_resource(
 int xenforeignmemory_unmap_resource(
     xenforeignmemory_handle *fmem, xenforeignmemory_resource_handle *fres);
 
+int xenforeignmemory_assign_resource(
+    xenforeignmemory_handle *fmem, domid_t domid, unsigned int type,
+    unsigned int id, void *addr);
+
 #endif
 
 /*

@@ -167,6 +167,15 @@ int xc_vm_event_get_version(xc_interface *xch)
 void *xc_vm_event_ng_enable(xc_interface *xch, uint32_t domain_id, int type)
 {
     void *pages = xencall_alloc_buffer_pages(xch->xcall, 1);
+    int rc;
+
+    rc = xenforeignmemory_assign_resource(xch->fmem, domain_id, 0, 0, pages);
+    if ( rc != 0 )
+    {
+        PERROR("Failed to assign resource");
+        xencall_free_buffer_pages(xch->xcall, pages, 1);
+        pages = NULL;
+    }
 
     return pages;
 }

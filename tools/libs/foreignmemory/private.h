@@ -74,12 +74,23 @@ static inline int osdep_xenforeignmemory_unmap_resource(
 {
     return 0;
 }
+
+static inline int osdep_xenforeignmemory_assign_resource(
+    xenforeignmemory_handle *fmem, xenforeignmemory_resource_handle *fres)
+{
+    errno = EOPNOTSUPP;
+    return -1;
+}
 #else
 int osdep_xenforeignmemory_restrict(xenforeignmemory_handle *fmem,
                                     domid_t domid);
 int osdep_xenforeignmemory_map_resource(
     xenforeignmemory_handle *fmem, xenforeignmemory_resource_handle *fres);
 int osdep_xenforeignmemory_unmap_resource(
+    xenforeignmemory_handle *fmem, xenforeignmemory_resource_handle *fres);
+int osdep_xenforeignmemory_unmap_resource(
+    xenforeignmemory_handle *fmem, xenforeignmemory_resource_handle *fres);
+int osdep_xenforeignmemory_assign_resource(
     xenforeignmemory_handle *fmem, xenforeignmemory_resource_handle *fres);
 #endif
 

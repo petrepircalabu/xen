@@ -188,6 +188,30 @@ int xenforeignmemory_unmap_resource(
     return rc;
 }
 
+int xenforeignmemory_assign_resource(
+    xenforeignmemory_handle *fmem, domid_t domid, unsigned int type,
+    unsigned int id, void *addr)
+{
+    xenforeignmemory_resource_handle *fres;
+    int rc;
+
+    fres = calloc(1, sizeof(*fres));
+    if ( !fres )
+    {
+        return -ENOMEM;
+    }
+
+    fres->domid = domid;
+    fres->type = type;
+    fres->id = id;
+    fres->addr = addr;
+
+    rc = osdep_xenforeignmemory_assign_resource(fmem, fres);
+    free(fres);
+
+    return rc;
+}
+
 /*
  * Local variables:
  * mode: C

@@ -340,6 +340,25 @@ int osdep_xenforeignmemory_map_resource(
     return 0;
 }
 
+int osdep_xenforeignmemory_assign_resource(
+    xenforeignmemory_handle *fmem, xenforeignmemory_resource_handle *fres)
+{
+    privcmd_assign_resource_t ar = {
+        .dom  = fres->domid,
+        .addr = (__u64) fres->addr,
+    };
+    int rc;
+
+    rc = ioctl(fmem->fd, IOCTL_PRIVCMD_ASSIGN_RESOURCE, &ar);
+    if (rc)
+    {
+        PERROR("IOCTL_PRIVCMD_ASSIGN_RESOURCE failed rc = %d", rc);
+    }
+
+    return rc;
+}
+
+
 /*
  * Local variables:
  * mode: C
