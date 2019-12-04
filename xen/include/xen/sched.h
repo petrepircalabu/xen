@@ -350,6 +350,8 @@ struct vm_event_domain
 
 struct evtchn_port_ops;
 
+struct domstate_observer;
+
 struct domain
 {
     domid_t          domain_id;
@@ -537,6 +539,8 @@ struct domain
     /* Argo interdomain communication support */
     struct argo_domain *argo;
 #endif
+
+    struct domstate_observer *observer;
 };
 
 /* Protect updates/reads (resp.) of domain_list and domain_hash. */

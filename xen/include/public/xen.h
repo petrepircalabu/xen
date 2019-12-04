@@ -130,6 +130,7 @@ DEFINE_XEN_GUEST_HANDLE(xen_ulong_t);
 #define __HYPERVISOR_argo_op              39
 #define __HYPERVISOR_xenpmu_op            40
 #define __HYPERVISOR_dm_op                41
+#define __HYPERVISOR_domstate_notify_op   42
 
 /* Architecture-specific hypercall definitions. */
 #define __HYPERVISOR_arch_0               48
@@ -190,6 +191,8 @@ DEFINE_XEN_GUEST_HANDLE(xen_ulong_t);
 #define VIRQ_ARGO       11 /* G. Argo interdomain message notification       */
 #define VIRQ_ENOMEM     12 /* G. (DOM0) Low on heap memory       */
 #define VIRQ_XENPMU     13 /* V.  PMC interrupt                              */
+/* FIXME: Check if VIRQ_DOM_EXC cannot be reused */
+#define VIRQ_DOMSTATE   14
 
 /* Architecture-specific VIRQ definitions. */
 #define VIRQ_ARCH_0    16
