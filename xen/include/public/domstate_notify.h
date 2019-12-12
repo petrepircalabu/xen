@@ -28,12 +28,21 @@
 #define __XEN_PUBLIC_DOMSTATE_NOTIFY_H__
 
 #include "xen.h"
+#include "io/ring.h"
 
 #define XEN_DOMSTATE_NOTIFY_register        1
 #define XEN_DOMSTATE_NOTIFY_unregister      2
 #define XEN_DOMSTATE_NOTIFY_enable          3
 #define XEN_DOMSTATE_NOTIFY_disable         4
 
+typedef struct domstate_notify_st {
+    uint32_t version;
+    uint32_t domain_id;
+    uint32_t state;
+    uint32_t extra;
+} domstate_notify_event_t;
+
+DEFINE_RING_TYPES(domstate_notify, domstate_notify_event_t, domstate_notify_event_t);
 #endif /* __XEN_PUBLIC_DOMSTATE_NOTIFY_H__ */
 
 /*
