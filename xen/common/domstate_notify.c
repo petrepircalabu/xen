@@ -19,29 +19,130 @@
  * along with this program; If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <xen/hypercall.h>
+
 #include <xen/guest_access.h>
+#include <xen/hypercall.h>
+#include <xen/notifier.h>
 #include <public/domstate_notify.h>
+
+struct domstate_observer
+{
+    struct domain *d;
+    void *ring_page;
+    struct page_info *ring_pg_struct;
+    domstate_notify_front_ring_t front_ring;
+    int xen_port;
+    struct list_head list;
+};
+
+static LIST_HEAD(domstate_observers_list);
+/*
+ * FIXME: TODO figure out locking
+static DEFINE_SPINLOCK(domstate_observers_lock);
+static DEFINE_RCU_READ_LOCK(rcu_domstate_observers_lock);
+ */
+
+const struct domstate_observer * find_domstate_observer(struct domain *d)
+{
+    const struct domstate_observer *obs;
+
+    list_for_each_entry( obs, &domstate_observers_list, list )
+    {
+        if ( obs->d->domain_id == d->domain_id )
+            return obs;
+    }
+    return NULL;
+}
+
+static int domstate_notify_register(struct domstate_notify_register *reg)
+{
+    int rc = 0;
+    struct domain *d = current->domain;
+    struct domstate_observer *obs;
+
+    printk("%s: XEN_DOMSTATE_NOTIFY_register gfn=0x%016lu\n", __func__,
+           reg->page_gfn);
+
+    if ( d->observer != NULL )
+        return -EBUSY;
+
+    obs = xzalloc(struct domstate_observer);
+    if ( obs == NULL )
+        return -ENOMEM;
+
+    rc = prepare_ring_for_helper(d, reg->page_gfn, &obs->ring_pg_struct,
+                                 &obs->ring_page);
+    if ( rc < 0 )
+        goto err;
+
+    FRONT_RING_INIT(&obs->front_ring,
+                    (domstate_notify_sring_t *)obs->ring_page,
+                    PAGE_SIZE);
+
+    obs->d = d;
+    list_add_tail_rcu(&obs->list, &domstate_observers_list);
+    d->observer = obs;
+
+    return 0;
+
+err:
+    xfree(obs);
+
+    return rc;
+}
+
+static int domstate_notify_unregister(void)
+{
+    struct domain *d = current->domain;
+
+    printk("%s: XEN_DOMSTATE_NOTIFY_unregister\n", __func__);
+
+    if ( d->observer == NULL )
+        return -EINVAL;
+
+    list_del_rcu(&d->observer->list);
+
+    xfree(&d->observer->list);
+    d->observer = NULL;
+
+    return 0;
+}
 
 long do_domstate_notify_op(unsigned int cmd, XEN_GUEST_HANDLE_PARAM(void) arg)
 {
-    long ret = 0;
+    long rc = 0;
 
     printk("%s: cmd=%d\n", __func__, cmd);
 
     switch ( cmd )
     {
-        case XEN_DOMSTATE_NOTIFY_register:
-        case XEN_DOMSTATE_NOTIFY_unregister:
-        case XEN_DOMSTATE_NOTIFY_enable:
-        case XEN_DOMSTATE_NOTIFY_disable:
-            break;
+    case XEN_DOMSTATE_NOTIFY_register:
+    {
+        struct domstate_notify_register reg;
 
-        default:
-            ret = -EINVAL;
+        if ( copy_from_guest(&reg, arg, 1) != 0 )
+            return -EFAULT;
+
+        rc = domstate_notify_register(&reg);
+
+        break;
     }
 
-    return ret;
+    case XEN_DOMSTATE_NOTIFY_unregister:
+    {
+        rc = domstate_notify_unregister();
+        break;
+    }
+
+    case XEN_DOMSTATE_NOTIFY_enable:
+    case XEN_DOMSTATE_NOTIFY_disable:
+        break;
+
+    default:
+        rc = -EINVAL;
+    }
+
+    return rc;
 }
 
 /*

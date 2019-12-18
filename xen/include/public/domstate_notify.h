@@ -35,6 +35,14 @@
 #define XEN_DOMSTATE_NOTIFY_enable          3
 #define XEN_DOMSTATE_NOTIFY_disable         4
 
+/*
+ * XEN_DOMSTATE_NOTIFY_register: registers a page as a domain state change
+ * notify sink.
+ */
+struct domstate_notify_register {
+    uint64_t page_gfn;
+};
+
 typedef struct domstate_notify_st {
     uint32_t version;
     uint32_t domain_id;
