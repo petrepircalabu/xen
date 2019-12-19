@@ -32,6 +32,8 @@
 #include <xen/xenoprof.h>
 #include <xen/irq.h>
 #include <xen/argo.h>
+#include <xen/domstate_notify.h>
+#include <xen/domstate_notify.h>
 #include <asm/debugger.h>
 #include <asm/p2m.h>
 #include <asm/processor.h>
@@ -731,6 +733,7 @@ int domain_kill(struct domain *d)
         vm_event_cleanup(d);
         put_domain(d);
         send_global_virq(VIRQ_DOM_EXC);
+        domstate_notify(d, 42);
         /* fallthrough */
     case DOMDYING_dead:
         break;

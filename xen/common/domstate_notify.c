@@ -26,6 +26,11 @@
 #include <xen/notifier.h>
 #include <public/domstate_notify.h>
 
+/* for public/io/ring.h macros */
+#define xen_mb()   smp_mb()
+#define xen_rmb()  smp_rmb()
+#define xen_wmb()  smp_wmb()
+
 struct domstate_observer
 {
     struct domain *d;
@@ -150,6 +155,56 @@ long do_domstate_notify_op(unsigned int cmd, XEN_GUEST_HANDLE_PARAM(void) arg)
         rc = -EINVAL;
     }
 
+    return rc;
+}
+
+static int domstate_notify_dispatch(struct domstate_observer *obs,
+                                    struct domain *d, int state)
+{
+    domstate_notify_front_ring_t *front_ring;
+    int free_req;
+    RING_IDX req_prod;
+    domstate_notify_event_t evt;
+
+    evt.version = 1;
+    evt.domain_id = d->domain_id;
+    evt.state = state;
+    evt.extra = 0;
+
+    front_ring = &obs->front_ring;
+    free_req = RING_FREE_REQUESTS(front_ring);
+
+    if ( free_req <= 0 )
+        return -EBUSY;
+
+    req_prod = front_ring->req_prod_pvt;
+    memcpy(RING_GET_REQUEST(front_ring, req_prod), &evt, sizeof(evt));
+    req_prod++;
+
+    /* Update ring */
+    front_ring->req_prod_pvt = req_prod;
+    RING_PUSH_REQUESTS(front_ring);
+
+    notify_via_xen_event_channel(obs->d, obs->xen_port);
+
+    return 0;
+}
+
+int domstate_notify(struct domain *d, int state)
+{
+    struct domstate_observer *obs;
+    int rc = 0;
+
+    printk("%s: domain %d state %d\n", __func__, d->domain_id, state);
+
+    list_for_each_entry ( obs, &domstate_observers_list, list )
+    {
+        rc = domstate_notify_dispatch(obs, d, state);
+        if ( rc )
+            goto exit;
+    }
+
+exit:
     return rc;
 }
 
