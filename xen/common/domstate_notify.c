@@ -20,6 +20,7 @@
  */
 
 
+#include <xen/event.h>
 #include <xen/guest_access.h>
 #include <xen/hypercall.h>
 #include <xen/notifier.h>
@@ -79,6 +80,11 @@ static int domstate_notify_register(struct domstate_notify_register *reg)
                     (domstate_notify_sring_t *)obs->ring_page,
                     PAGE_SIZE);
 
+    rc = alloc_unbound_xen_event_channel(d, 0, d->domain_id, NULL);
+    if ( rc < 0 )
+        goto err;
+    reg->port = rc;
+
     obs->d = d;
     list_add_tail_rcu(&obs->list, &domstate_observers_list);
     d->observer = obs;
@@ -86,6 +92,7 @@ static int domstate_notify_register(struct domstate_notify_register *reg)
     return 0;
 
 err:
+    destroy_ring_for_helper(&obs->ring_page, obs->ring_pg_struct);
     xfree(obs);
 
     return rc;
@@ -122,8 +129,9 @@ long do_domstate_notify_op(unsigned int cmd, XEN_GUEST_HANDLE_PARAM(void) arg)
 
         if ( copy_from_guest(&reg, arg, 1) != 0 )
             return -EFAULT;
-
         rc = domstate_notify_register(&reg);
+        if ( !rc && __copy_to_guest(arg, &reg, 1) )
+            rc = -EFAULT;
 
         break;
     }

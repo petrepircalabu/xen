@@ -40,7 +40,8 @@
  * notify sink.
  */
 struct domstate_notify_register {
-    uint64_t page_gfn;
+    uint64_t page_gfn;              /* IN */
+    uint32_t port;                  /* OUT */
 };
 
 typedef struct domstate_notify_st {
