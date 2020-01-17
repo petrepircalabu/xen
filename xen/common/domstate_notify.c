@@ -37,7 +37,6 @@ struct domstate_observer
     void *ring_page;
     struct page_info *ring_pg_struct;
     domstate_notify_front_ring_t front_ring;
-    int xen_port;
     struct list_head list;
 };
 
@@ -66,9 +65,6 @@ static int domstate_notify_register(struct domstate_notify_register *reg)
     struct domain *d = current->domain;
     struct domstate_observer *obs;
 
-    printk("%s: XEN_DOMSTATE_NOTIFY_register gfn=0x%016lu\n", __func__,
-           reg->page_gfn);
-
     if ( d->observer != NULL )
         return -EBUSY;
 
@@ -84,11 +80,6 @@ static int domstate_notify_register(struct domstate_notify_register *reg)
     FRONT_RING_INIT(&obs->front_ring,
                     (domstate_notify_sring_t *)obs->ring_page,
                     PAGE_SIZE);
-
-    rc = alloc_unbound_xen_event_channel(d, 0, d->domain_id, NULL);
-    if ( rc < 0 )
-        goto err;
-    reg->port = rc;
 
     obs->d = d;
     list_add_tail_rcu(&obs->list, &domstate_observers_list);
@@ -106,15 +97,16 @@ err:
 static int domstate_notify_unregister(void)
 {
     struct domain *d = current->domain;
+    struct domstate_observer *obs = d->observer;
 
-    printk("%s: XEN_DOMSTATE_NOTIFY_unregister\n", __func__);
-
-    if ( d->observer == NULL )
+    if ( obs == NULL )
         return -EINVAL;
 
-    list_del_rcu(&d->observer->list);
+    list_del_rcu(&obs->list);
 
-    xfree(&d->observer->list);
+    destroy_ring_for_helper(&obs->ring_page, obs->ring_pg_struct);
+
+    xfree(obs);
     d->observer = NULL;
 
     return 0;
@@ -123,8 +115,6 @@ static int domstate_notify_unregister(void)
 long do_domstate_notify_op(unsigned int cmd, XEN_GUEST_HANDLE_PARAM(void) arg)
 {
     long rc = 0;
-
-    printk("%s: cmd=%d\n", __func__, cmd);
 
     switch ( cmd )
     {
@@ -142,10 +132,8 @@ long do_domstate_notify_op(unsigned int cmd, XEN_GUEST_HANDLE_PARAM(void) arg)
     }
 
     case XEN_DOMSTATE_NOTIFY_unregister:
-    {
         rc = domstate_notify_unregister();
         break;
-    }
 
     case XEN_DOMSTATE_NOTIFY_enable:
     case XEN_DOMSTATE_NOTIFY_disable:
@@ -185,7 +173,7 @@ static int domstate_notify_dispatch(struct domstate_observer *obs,
     front_ring->req_prod_pvt = req_prod;
     RING_PUSH_REQUESTS(front_ring);
 
-    notify_via_xen_event_channel(obs->d, obs->xen_port);
+    send_guest_global_virq(obs->d, VIRQ_DOMSTATE);
 
     return 0;
 }
@@ -194,8 +182,6 @@ int domstate_notify(struct domain *d, int state)
 {
     struct domstate_observer *obs;
     int rc = 0;
-
-    printk("%s: domain %d state %d\n", __func__, d->domain_id, state);
 
     list_for_each_entry ( obs, &domstate_observers_list, list )
     {
