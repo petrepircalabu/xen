@@ -595,6 +595,13 @@ void vm_event_cleanup(struct domain *d)
 #endif
 }
 
+int vm_event_has_active_waitqueue(const struct vm_event_domain *ved)
+{
+    /* ved may be xzalloc()'d without INIT_LIST_HEAD() yet. */
+    return (ved && !list_head_is_null(&ved->wq.list) &&
+            !list_empty(&ved->wq.list));
+}
+
 int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec)
 {
     int rc;

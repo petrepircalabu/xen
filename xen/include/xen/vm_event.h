@@ -32,6 +32,9 @@ void vm_event_cleanup(struct domain *d);
 /* Returns whether the VM event domain has been set up */
 bool vm_event_check(struct vm_event_domain *ved);
 
+/* Return whether the VM event domain has queued requests */
+int vm_event_has_active_waitqueue(const struct vm_event_domain *ved);
+
 /* Returns 0 on success, -ENOSYS if there is no ring, -EBUSY if there is no
  * available space and the caller is a foreign domain. If the guest itself
  * is the caller, -EBUSY is avoided by sleeping on a wait queue to ensure

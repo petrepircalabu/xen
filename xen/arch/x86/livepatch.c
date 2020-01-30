@@ -11,17 +11,11 @@
 #include <xen/livepatch_elf.h>
 #include <xen/livepatch.h>
 #include <xen/sched.h>
+#include <xen/vm_event.h>
 
 #include <asm/fixmap.h>
 #include <asm/nmi.h>
 #include <asm/livepatch.h>
-
-static bool has_active_waitqueue(const struct vm_event_domain *ved)
-{
-    /* ved may be xzalloc()'d without INIT_LIST_HEAD() yet. */
-    return (ved && !list_head_is_null(&ved->wq.list) &&
-            !list_empty(&ved->wq.list));
-}
 
 /*
  * x86's implementation of waitqueue violates the livepatching safey principle
@@ -37,14 +31,14 @@ int arch_livepatch_safety_check(void)
     for_each_domain ( d )
     {
 #ifdef CONFIG_MEM_SHARING
-        if ( has_active_waitqueue(d->vm_event_share) )
+        if ( vm_event_has_active_waitqueue(d->vm_event_share) )
             goto fail;
 #endif
 #ifdef CONFIG_MEM_PAGING
-        if ( has_active_waitqueue(d->vm_event_paging) )
+        if ( vm_event_has_active_waitqueue(d->vm_event_paging) )
             goto fail;
 #endif
-        if ( has_active_waitqueue(d->vm_event_monitor) )
+        if ( vm_event_has_active_waitqueue(d->vm_event_monitor) )
             goto fail;
     }
 
