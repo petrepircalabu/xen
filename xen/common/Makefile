@@ -52,6 +52,7 @@ obj-y += timer.o
 obj-$(CONFIG_TRACEBUFFER) += trace.o
 obj-y += version.o
 obj-y += virtual_region.o
+obj-y += vm_event_common.o
 obj-y += vm_event.o
 obj-y += vm_event_ng.o
 obj-y += vmap.o

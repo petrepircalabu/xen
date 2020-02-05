@@ -30,6 +30,8 @@
 #include <asm/vm_event.h>
 #include <xsm/xsm.h>
 
+#include "vm_event_common.h"
+
 /* for public/io/ring.h macros */
 #define xen_mb()   smp_mb()
 #define xen_rmb()  smp_rmb()
@@ -64,6 +66,77 @@ struct vm_event_ring_domain
 };
 
 static const struct vm_event_ops vm_event_ring_ops;
+
+static int vm_event_ring_pfn_param(uint32_t type)
+{
+    switch ( type )
+    {
+#ifdef CONFIG_HAS_MEM_PAGING
+    case XEN_VM_EVENT_TYPE_PAGING:
+        return HVM_PARAM_PAGING_RING_PFN;
+#endif
+
+    case XEN_VM_EVENT_TYPE_MONITOR:
+        return HVM_PARAM_MONITOR_RING_PFN;
+
+#ifdef CONFIG_MEM_SHARING
+    case XEN_VM_EVENT_TYPE_SHARING:
+        return HVM_PARAM_SHARING_RING_PFN;
+#endif
+    };
+
+    return -1;
+}
+
+static int vm_event_pause_flag(uint32_t type)
+{
+    switch ( type )
+    {
+#ifdef CONFIG_HAS_MEM_PAGING
+    case XEN_VM_EVENT_TYPE_PAGING:
+        return _VPF_mem_paging;
+#endif
+
+    case XEN_VM_EVENT_TYPE_MONITOR:
+        return _VPF_mem_access;
+
+#ifdef CONFIG_MEM_SHARING
+    case XEN_VM_EVENT_TYPE_SHARING:
+        return _VPF_mem_sharing;
+#endif
+    };
+
+    return -1;
+}
+
+#ifdef CONFIG_HAS_MEM_PAGING
+static void mem_paging_notification(struct vcpu *v, unsigned int port);
+#endif
+static void monitor_notification(struct vcpu *v, unsigned int port);
+#ifdef CONFIG_MEM_SHARING
+static void mem_sharing_notification(struct vcpu *v, unsigned int port);
+#endif
+
+static xen_event_channel_notification_t vm_event_notification_fn(uint32_t type)
+{
+    switch ( type )
+    {
+#ifdef CONFIG_HAS_MEM_PAGING
+    case XEN_VM_EVENT_TYPE_PAGING:
+        return mem_paging_notification;
+#endif
+
+    case XEN_VM_EVENT_TYPE_MONITOR:
+        return monitor_notification;
+
+#ifdef CONFIG_MEM_SHARING
+    case XEN_VM_EVENT_TYPE_SHARING:
+        return mem_sharing_notification;
+#endif
+    };
+
+    return NULL;
+}
 
 static int vm_event_ring_enable(
     struct domain *d,
@@ -558,23 +631,6 @@ static void mem_sharing_notification(struct vcpu *v, unsigned int port)
 }
 #endif
 
-/* Clean up on domain destruction */
-void vm_event_cleanup(struct domain *d)
-{
-#ifdef CONFIG_HAS_MEM_PAGING
-    if ( vm_event_check(d->vm_event_paging) )
-        d->vm_event_paging->ops->cleanup(&d->vm_event_paging);
-#endif
-
-    if ( vm_event_check(d->vm_event_monitor) )
-        d->vm_event_monitor->ops->cleanup(&d->vm_event_monitor);
-
-#ifdef CONFIG_MEM_SHARING
-    if ( vm_event_check(d->vm_event_share) )
-        d->vm_event_share->ops->cleanup(&d->vm_event_share);
-#endif
-}
-
 static void vm_event_ring_cleanup(struct vm_event_domain **_ved)
 {
     struct vm_event_ring_domain *impl = to_ring(*_ved);
@@ -597,16 +653,9 @@ static int vm_event_ring_has_active_waitqueue(const struct vm_event_domain *ved)
     return (!list_head_is_null(&impl->wq.list) && !list_empty(&impl->wq.list));
 }
 
-int vm_event_has_active_waitqueue(const struct vm_event_domain *ved)
-{
-    if ( ved == NULL )
-        return 0;
-
-    return ved->ops->has_active_waitqueue(ved);
-}
-
 int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec)
 {
+    struct vm_event_domain **p_ved = vm_event_get_pved(d, vec->type);
     int rc;
 
     if ( vec->op == XEN_VM_EVENT_GET_VERSION )
@@ -614,6 +663,9 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec)
         vec->u.version = VM_EVENT_INTERFACE_VERSION;
         return 0;
     }
+
+    if ( p_ved == NULL)
+        return -ENOSYS;
 
     rc = xsm_vm_event_control(XSM_PRIV, d, vec->type, vec->op);
     if ( rc )
@@ -640,148 +692,49 @@ int vm_event_domctl(struct domain *d, struct xen_domctl_vm_event_op *vec)
         return -EINVAL;
     }
 
-    rc = -ENOSYS;
+    rc = -EINVAL;
 
-    switch ( vec->type )
+    switch( vec->op )
     {
-#ifdef CONFIG_HAS_MEM_PAGING
-    case XEN_VM_EVENT_TYPE_PAGING:
+    case XEN_VM_EVENT_ENABLE:
     {
-        rc = -EINVAL;
+        xen_event_channel_notification_t notification_fn =
+            vm_event_notification_fn(vec->type);
+        int pause_flag = vm_event_pause_flag(vec->type);
+        int ring_pfn_param = vm_event_ring_pfn_param(vec->type);
 
-        switch( vec->op )
-        {
-        case XEN_VM_EVENT_ENABLE:
-        {
-            rc = -EOPNOTSUPP;
-            /* hvm fixme: p2m_is_foreign types need addressing */
-            if ( is_hvm_domain(hardware_domain) )
-                break;
+        ASSERT(notification_fn);
+        ASSERT(pause_flag >= 0);
+        ASSERT(ring_pfn_param >= 0);
 
-            rc = -ENODEV;
-            /* Only HAP is supported */
-            if ( !hap_enabled(d) )
-                break;
-
-            /* No paging if iommu is used */
-            rc = -EMLINK;
-            if ( unlikely(is_iommu_enabled(d)) )
-                break;
-
-            rc = -EXDEV;
-            /* Disallow paging in a PoD guest */
-            if ( p2m_pod_entry_count(p2m_get_hostp2m(d)) )
-                break;
-
-            /* domain_pause() not required here, see XSA-99 */
-            rc = vm_event_ring_enable(d, vec, &d->vm_event_paging, _VPF_mem_paging,
-                                 HVM_PARAM_PAGING_RING_PFN,
-                                 mem_paging_notification);
-        }
-        break;
-
-        case XEN_VM_EVENT_DISABLE:
-            if ( !vm_event_check(d->vm_event_paging) )
-                break;
-            domain_pause(d);
-            rc = vm_event_ring_disable(&d->vm_event_paging);
-            domain_unpause(d);
+        rc = vm_event_can_be_enabled(d, vec->type);
+        if ( rc )
             break;
 
-        case XEN_VM_EVENT_RESUME:
-            rc = vm_event_ring_resume(to_ring(d->vm_event_paging));
-            break;
-
-        default:
-            rc = -ENOSYS;
-            break;
-        }
-    }
-    break;
-#endif
-
-    case XEN_VM_EVENT_TYPE_MONITOR:
-    {
-        rc = -EINVAL;
-
-        switch( vec->op )
-        {
-        case XEN_VM_EVENT_ENABLE:
-            /* domain_pause() not required here, see XSA-99 */
-            rc = arch_monitor_init_domain(d);
-            if ( rc )
-                break;
-            rc = vm_event_ring_enable(d, vec, &d->vm_event_monitor, _VPF_mem_access,
-                                 HVM_PARAM_MONITOR_RING_PFN,
-                                 monitor_notification);
-            break;
-
-        case XEN_VM_EVENT_DISABLE:
-            if ( !vm_event_check(d->vm_event_monitor) )
-                break;
-            domain_pause(d);
-            rc = vm_event_ring_disable(&d->vm_event_monitor);
-            arch_monitor_cleanup_domain(d);
-            domain_unpause(d);
-            break;
-
-        case XEN_VM_EVENT_RESUME:
-            rc = vm_event_ring_resume(to_ring(d->vm_event_monitor));
-            break;
-
-        default:
-            rc = -ENOSYS;
-            break;
-        }
+        rc = vm_event_ring_enable(d, vec, p_ved, pause_flag, ring_pfn_param,
+                                  notification_fn);
     }
     break;
 
-#ifdef CONFIG_MEM_SHARING
-    case XEN_VM_EVENT_TYPE_SHARING:
+    case XEN_VM_EVENT_DISABLE:
     {
-        rc = -EINVAL;
-
-        switch( vec->op )
-        {
-        case XEN_VM_EVENT_ENABLE:
-            rc = -EOPNOTSUPP;
-            /* hvm fixme: p2m_is_foreign types need addressing */
-            if ( is_hvm_domain(hardware_domain) )
-                break;
-
-            rc = -ENODEV;
-            /* Only HAP is supported */
-            if ( !hap_enabled(d) )
-                break;
-
-            /* domain_pause() not required here, see XSA-99 */
-            rc = vm_event_ring_enable(d, vec, &d->vm_event_share, _VPF_mem_sharing,
-                                 HVM_PARAM_SHARING_RING_PFN,
-                                 mem_sharing_notification);
+        if ( vm_event_check(*p_ved) )
             break;
-
-        case XEN_VM_EVENT_DISABLE:
-            if ( !vm_event_check(d->vm_event_share) )
-                break;
-            domain_pause(d);
-            rc = vm_event_ring_disable(&d->vm_event_share);
-            domain_unpause(d);
-            break;
-
-        case XEN_VM_EVENT_RESUME:
-            rc = vm_event_ring_resume(to_ring(d->vm_event_share));
-            break;
-
-        default:
-            rc = -ENOSYS;
-            break;
-        }
+        domain_pause(d);
+        rc = vm_event_ring_disable(p_ved);
+        domain_unpause(d);
     }
     break;
-#endif
+
+    case XEN_VM_EVENT_RESUME:
+    {
+        rc = vm_event_ring_resume(to_ring(*p_ved));
+    }
+    break;
 
     default:
         rc = -ENOSYS;
+        break;
     }
 
     return rc;
